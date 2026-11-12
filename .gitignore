@@ -25,3 +25,8 @@ dist-ssr
 
 # Coverage reports (generados por vitest --coverage)
 coverage/
+
+# Variables de entorno (la plantilla .env.example SÍ se versiona)
+.env
+.env.*
+!.env.example

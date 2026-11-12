@@ -1,9 +1,9 @@
 import ToastNotificacion from "./components/ToastNotificacion";
-import { useLayoutEffect } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import Topbar from './components/Topbar';
 import Navbar from './components/Navbar';
-import { cerrarSesion, obtenerSesionActiva } from './data/auth';
+import RutaProtegida from './components/RutaProtegida';
+import EsperarSesion from './components/EsperarSesion';
 import Home from './pages/Home';
 import Catalogo from './pages/Catalogo';
 import DetalleProducto from './pages/DetalleProducto';
@@ -26,17 +26,11 @@ function App() {
   const location = useLocation();
   const esRutaAdmin = location.pathname.startsWith('/admin');
 
-  // La sesión de administrador solo es válida dentro del panel. Al navegar a
-  // cualquier página de la tienda (home, catálogo, carrito, cuenta, etc.) se
-  // cierra automáticamente para no exponer las opciones de administración.
-  useLayoutEffect(() => {
-    if (location.pathname.startsWith('/admin')) return;
+  // Páginas que se inicializan con los datos del usuario (formularios prellenados): esperan a saber quién es.
+  const conSesion = (pagina) => <EsperarSesion>{pagina}</EsperarSesion>;
 
-    const sesion = obtenerSesionActiva();
-    if (sesion?.rol === 'admin') {
-      cerrarSesion();
-    }
-  }, [location.pathname]);
+  // Páginas solo para clientes. Un ADMIN que entra aquí es llevado a /admin.
+  const soloCliente = (pagina) => <RutaProtegida roles={['CLIENTE']}>{pagina}</RutaProtegida>;
 
   return (
     <>
@@ -47,22 +41,22 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/catalogo" element={<Catalogo />} />
         <Route path="/producto/:id" element={<DetalleProducto />} />
-        <Route path="/arriendos" element={<Arriendos />} />
+        <Route path="/arriendos" element={conSesion(<Arriendos />)} />
         <Route path="/nosotros" element={<Nosotros />} />
         <Route path="/fletes" element={<Fletes />} />
         <Route path="/garantias" element={<Garantias />} />
         <Route path="/faq" element={<PreguntasFrecuentes />} />
         <Route path="/terminos" element={<TerminosCondiciones />} />
         <Route path="/privacidad" element={<Privacidad />} />
-        <Route path="/contacto" element={<ContactoCotizacion />} />
-        <Route path="/cotizaciones" element={<ContactoCotizacion />} />
-        <Route path="/carrito" element={<Carrito />} />
-        <Route path="/cuenta" element={<CuentaCliente />} />
-        <Route path="/mi-cuenta" element={<CuentaCliente />} />
-        <Route path="/perfil" element={<CuentaCliente />} />
+        <Route path="/contacto" element={conSesion(<ContactoCotizacion />)} />
+        <Route path="/cotizaciones" element={conSesion(<ContactoCotizacion />)} />
+        <Route path="/carrito" element={conSesion(<Carrito />)} />
+        <Route path="/cuenta" element={soloCliente(<CuentaCliente />)} />
+        <Route path="/mi-cuenta" element={soloCliente(<CuentaCliente />)} />
+        <Route path="/perfil" element={soloCliente(<CuentaCliente />)} />
         <Route path="/login" element={<Login />} />
         <Route path="/registro" element={<Login />} />
-        <Route path="/admin" element={<Admin />} />
+        <Route path="/admin" element={<RutaProtegida roles={['ADMIN']}><Admin /></RutaProtegida>} />
       </Routes>
       {!esRutaAdmin && <Footer />}
     </>

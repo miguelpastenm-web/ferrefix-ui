@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { obtenerSesionActiva, actualizarDatosUsuario, EVENTO_SESION_ACTUALIZADA } from "../data/auth";
+import { useAuth } from "../context/authContexto";
+import { actualizarPerfil } from "../api/usuarios";
+import { ApiError, erroresPorCampo } from "../api/errores";
 import { obtenerOrdenes, EVENTO_ORDENES_ACTUALIZADAS } from "../data/ordenes";
 import { obtenerContratosArriendo, EVENTO_MAQUINARIAS_ACTUALIZADAS } from "../data/maquinarias";
 import { REGIONES_CHILE, normalizarRegion, obtenerComunas } from "../data/chile";
-import { validadores, formatearRut, formatearTelefono } from "../data/validaciones";
+import { validadores, formatearTelefono } from "../data/validaciones";
 import { mostrarToast } from "../components/ToastNotificacion";
 
 export default function CuentaCliente() {
@@ -12,7 +14,7 @@ export default function CuentaCliente() {
   const tabInicial = searchParams.get("tab") || "datos";
   const [tabActiva, setTabActiva] = useState(tabInicial);
 
-  const [sesion, setSesion] = useState(obtenerSesionActiva);
+  const { usuario: sesion, actualizarUsuario } = useAuth();
   const [ordenes, setOrdenes] = useState([]);
   const [arriendos, setArriendos] = useState([]);
 
@@ -28,28 +30,21 @@ export default function CuentaCliente() {
     comuna: "Providencia"
   });
   const [errores, setErrores] = useState({});
+  const [guardando, setGuardando] = useState(false);
 
+  // Cuando carga (o cambia) el usuario de la sesión, se precarga el formulario de edición.
   useEffect(() => {
-    const handleSesion = () => {
-      const s = obtenerSesionActiva();
-      setSesion(s);
-      if (s) {
-        setFormDatos({
-          nombre: s.nombre || "",
-          rut: s.rut || "",
-          email: s.email || "",
-          telefono: s.telefono || "",
-          direccion: s.direccion || "",
-          region: normalizarRegion(s.region || "Región Metropolitana"),
-          comuna: s.comuna || "Providencia"
-        });
-      }
-    };
-
-    handleSesion();
-    window.addEventListener(EVENTO_SESION_ACTUALIZADA, handleSesion);
-    return () => window.removeEventListener(EVENTO_SESION_ACTUALIZADA, handleSesion);
-  }, []);
+    if (!sesion) return;
+    setFormDatos({
+      nombre: sesion.nombre || "",
+      rut: sesion.rut || "",
+      email: sesion.email || "",
+      telefono: sesion.telefono || "",
+      direccion: sesion.direccion || "",
+      region: normalizarRegion(sesion.region || "Región Metropolitana"),
+      comuna: sesion.comuna || "Providencia"
+    });
+  }, [sesion]);
 
   useEffect(() => {
     if (!sesion) return;
@@ -59,7 +54,7 @@ export default function CuentaCliente() {
       const mias = todas.filter(
         (o) =>
           (o.cliente && o.cliente.email && o.cliente.email.toLowerCase() === sesion.email.toLowerCase()) ||
-          o.idUsuario === sesion.idUsuario
+          o.idUsuario === sesion.id
       );
       setOrdenes(mias);
     };
@@ -69,7 +64,7 @@ export default function CuentaCliente() {
       const mios = todos.filter(
         (c) =>
           (c.usuario && c.usuario.email && c.usuario.email.toLowerCase() === sesion.email.toLowerCase()) ||
-          (c.usuario && c.usuario.idUsuario === sesion.idUsuario) ||
+          (c.usuario && c.usuario.idUsuario === sesion.id) ||
           (sesion.rut && c.usuario && c.usuario.rut === sesion.rut)
       );
       setArriendos(mios);
@@ -100,13 +95,11 @@ export default function CuentaCliente() {
     }).format(valor || 0);
   };
 
-  const handleGuardarDatos = (e) => {
+  const handleGuardarDatos = async (e) => {
     e.preventDefault();
     const errs = {};
 
     if (!formDatos.nombre.trim()) errs.nombre = "El nombre es requerido.";
-    const errRut = validadores.rut(formDatos.rut);
-    if (errRut) errs.rut = errRut;
     const errTel = validadores.telefono(formDatos.telefono);
     if (errTel) errs.telefono = errTel;
     if (!formDatos.direccion.trim()) errs.direccion = "La dirección de entrega es obligatoria.";
@@ -114,14 +107,23 @@ export default function CuentaCliente() {
     setErrores(errs);
     if (Object.keys(errs).length > 0) return;
 
-    const res = actualizarDatosUsuario(formDatos);
-    if (res.ok) {
+    setGuardando(true);
+    try {
+      // El RUT y el correo no se envían: el servidor no permite cambiarlos.
+      const actualizado = await actualizarPerfil(formDatos);
+      actualizarUsuario(actualizado); // el contexto queda con los datos nuevos sin volver a iniciar sesión
       setEditando(false);
       mostrarToast({
         titulo: "¡Datos Actualizados!",
         mensaje: "Tus datos de despacho han sido guardados con éxito para futuras compras.",
         tipo: "success"
       });
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      setErrores((prev) => ({ ...prev, ...erroresPorCampo(error) }));
+      mostrarToast({ titulo: "No se pudieron guardar los datos", mensaje: error.mensaje, tipo: "danger" });
+    } finally {
+      setGuardando(false);
     }
   };
 
@@ -234,8 +236,8 @@ export default function CuentaCliente() {
                   <form onSubmit={handleGuardarDatos} noValidate>
                     <div className="row g-3">
                       <div className="col-12 col-md-6">
-                        <label className="form-label small fw-semibold">Nombre Completo *</label>
-                        <input
+                        <label htmlFor="cuenta-nombre" className="form-label small fw-semibold">Nombre Completo *</label>
+                        <input id="cuenta-nombre"
                           type="text"
                           className={`form-control form-control-sm rounded-1 ${errores.nombre ? "is-invalid" : ""}`}
                           value={formDatos.nombre}
@@ -246,22 +248,19 @@ export default function CuentaCliente() {
                       </div>
 
                       <div className="col-12 col-md-6">
-                        <label className="form-label small fw-semibold">RUN / RUT *</label>
-                        <input
+                        <label htmlFor="cuenta-rut" className="form-label small fw-semibold">RUN / RUT</label>
+                        <input id="cuenta-rut"
                           type="text"
-                          className={`form-control form-control-sm rounded-1 font-monospace ${errores.rut ? "is-invalid" : ""}`}
+                          className="form-control form-control-sm rounded-1 font-monospace bg-light"
                           value={formDatos.rut}
-                          onChange={(e) => setFormDatos({ ...formDatos, rut: formatearRut(e.target.value) })}
-                          maxLength={12}
-                          placeholder="Ej: 15.432.890-K"
-                          required
+                          readOnly
                         />
-                        {errores.rut && <div className="invalid-feedback">{errores.rut}</div>}
+                        <span className="text-muted small">El RUT no se puede modificar</span>
                       </div>
 
                       <div className="col-12 col-md-6">
-                        <label className="form-label small fw-semibold">Correo Electrónico</label>
-                        <input
+                        <label htmlFor="cuenta-email" className="form-label small fw-semibold">Correo Electrónico</label>
+                        <input id="cuenta-email"
                           type="email"
                           className="form-control form-control-sm rounded-1 bg-light"
                           value={formDatos.email}
@@ -271,8 +270,8 @@ export default function CuentaCliente() {
                       </div>
 
                       <div className="col-12 col-md-6">
-                        <label className="form-label small fw-semibold">Teléfono de Contacto *</label>
-                        <input
+                        <label htmlFor="cuenta-telefono" className="form-label small fw-semibold">Teléfono de Contacto *</label>
+                        <input id="cuenta-telefono"
                           type="tel"
                           className={`form-control form-control-sm rounded-1 ${errores.telefono ? "is-invalid" : ""}`}
                           value={formDatos.telefono}
@@ -285,8 +284,8 @@ export default function CuentaCliente() {
                       </div>
 
                       <div className="col-12 col-md-6">
-                        <label className="form-label small fw-semibold">Región *</label>
-                        <select
+                        <label htmlFor="cuenta-region" className="form-label small fw-semibold">Región *</label>
+                        <select id="cuenta-region"
                           className="form-select form-select-sm rounded-1"
                           value={formDatos.region}
                           onChange={(e) => {
@@ -306,8 +305,8 @@ export default function CuentaCliente() {
                       </div>
 
                       <div className="col-12 col-md-6">
-                        <label className="form-label small fw-semibold">Comuna *</label>
-                        <select
+                        <label htmlFor="cuenta-comuna" className="form-label small fw-semibold">Comuna *</label>
+                        <select id="cuenta-comuna"
                           className="form-select form-select-sm rounded-1"
                           value={formDatos.comuna}
                           onChange={(e) => setFormDatos({ ...formDatos, comuna: e.target.value })}
@@ -319,8 +318,8 @@ export default function CuentaCliente() {
                       </div>
 
                       <div className="col-12">
-                        <label className="form-label small fw-semibold">Dirección de Entrega (Calle, Número, Depto) *</label>
-                        <input
+                        <label htmlFor="cuenta-direccion" className="form-label small fw-semibold">Dirección de Entrega (Calle, Número, Depto) *</label>
+                        <input id="cuenta-direccion"
                           type="text"
                           className={`form-control form-control-sm rounded-1 ${errores.direccion ? "is-invalid" : ""}`}
                           value={formDatos.direccion}
@@ -342,8 +341,9 @@ export default function CuentaCliente() {
                         <button
                           type="submit"
                           className="btn btn-ambar btn-sm rounded-1 px-4 fw-bold shadow-sm"
+                          disabled={guardando}
                         >
-                          Guardar Datos de Despacho
+                          {guardando ? "Guardando…" : "Guardar Datos de Despacho"}
                         </button>
                       </div>
                     </div>

@@ -1,68 +1,50 @@
-// Test: Navbar: muestra los enlaces públicos y de sesión, nunca expone el panel admin en la tienda y sí muestra a los clientes
+// Test: Navbar: muestra los enlaces públicos, ofrece login/registro a anónimos, Mi Cuenta y carrito a clientes y solo el panel (sin carrito) a administradores
 // Función: Navbar()
 
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { screen, cleanup, fireEvent } from '@testing-library/react';
 import Navbar from '../components/Navbar.jsx';
-
-const renderizar = () =>
-  render(
-    <MemoryRouter>
-      <Navbar />
-    </MemoryRouter>
-  );
-
-const guardarSesion = (sesion) => {
-  localStorage.setItem('ferrefix_sesion_activa_v1', JSON.stringify(sesion));
-};
+import { renderConAuth } from './helpers/renderConAuth.js';
+import { USUARIO_CLIENTE, USUARIO_ADMIN } from './helpers/fetchMock.js';
 
 describe('Componente Navbar', () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
+  beforeEach(() => localStorage.clear());
+  afterEach(() => cleanup());
 
-  afterEach(() => {
-    cleanup();
-  });
-
-  test('Navbar: muestra los enlaces públicos y de sesión, nunca expone el panel admin en la tienda y sí muestra a los clientes', () => {
-    renderizar();
+  test('Anónimo: enlaces públicos, Iniciar Sesión y Registrarse, y sin panel ni Cerrar Sesión', () => {
+    renderConAuth(<Navbar />);
     expect(screen.getByRole('link', { name: 'Catálogo' }).getAttribute('href')).toBe('/catalogo');
     expect(screen.getByRole('link', { name: 'Arriendos' }).getAttribute('href')).toBe('/arriendos');
     expect(screen.getByRole('link', { name: 'Nosotros' }).getAttribute('href')).toBe('/nosotros');
     expect(screen.getByRole('link', { name: 'Cotizaciones' }).getAttribute('href')).toBe('/contacto');
     expect(screen.getByRole('link', { name: 'Iniciar Sesión' }).getAttribute('href')).toBe('/login');
     expect(screen.getByRole('link', { name: 'Registrarse' }).getAttribute('href')).toBe('/registro');
-
-    expect(screen.queryByText('Panel Administrativo')).toBeNull();
+    expect(screen.queryByText('Panel de administración')).toBeNull();
     expect(screen.queryByText('Cerrar Sesión')).toBeNull();
-    cleanup();
+  });
 
-    // Aunque exista una sesión de admin guardada, el navbar de la tienda la
-    // oculta: esa sesión solo es válida dentro de /admin.
-    guardarSesion({
-      idUsuario: 'USR-001',
-      nombre: 'Administrador Ferrefix',
-      email: 'admin@ferrefix.cl',
-      rol: 'admin'
-    });
-    renderizar();
-    expect(screen.queryByText('Panel Administrativo')).toBeNull();
-    expect(screen.queryByText('Cerrar Sesión')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Iniciar Sesión' })).toBeTruthy();
-    cleanup();
-
-    // Un cliente sí debe ver su sesión en el navbar.
-    guardarSesion({
-      idUsuario: 'USR-003',
-      nombre: 'Juan Maestro',
-      email: 'cliente@ferrefix.cl',
-      rol: 'cliente'
-    });
-    renderizar();
+  test('Cliente: ve su nombre, Mi Cuenta, Mi Carrito y Cerrar Sesión (que llama a logout)', () => {
+    const { valor } = renderConAuth(<Navbar />, { usuario: USUARIO_CLIENTE });
     expect(screen.getByTitle('Conectado como Juan Maestro')).toBeTruthy();
-    expect(screen.getByText('Cerrar Sesión')).toBeTruthy();
-    expect(screen.queryByText('Panel Administrativo')).toBeNull();
+    expect(screen.getByRole('link', { name: /Mi Cuenta/ }).getAttribute('href')).toBe('/cuenta');
+    expect(screen.getByRole('link', { name: /Mi Carrito/ }).getAttribute('href')).toBe('/carrito');
+    expect(screen.queryByText('Panel de administración')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Iniciar Sesión' })).toBeNull();
+    fireEvent.click(screen.getByText('Cerrar Sesión'));
+    expect(valor.logout).toHaveBeenCalledTimes(1);
+  });
+
+  test('Admin: ve el panel de administración y NO ve carrito ni Mi Cuenta', () => {
+    renderConAuth(<Navbar />, { usuario: USUARIO_ADMIN });
+    expect(screen.getByRole('link', { name: /Panel de administración/ }).getAttribute('href')).toBe('/admin');
+    expect(screen.queryByTitle('Ver mi carrito de compras')).toBeNull();
+    expect(screen.queryByRole('link', { name: /Mi Carrito/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Mi Cuenta/ })).toBeNull();
+  });
+
+  test('Mientras se verifica la sesión muestra un indicador y no ofrece Iniciar Sesión', () => {
+    renderConAuth(<Navbar />, { cargando: true });
+    expect(screen.getByRole('status', { name: 'Verificando sesión' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Iniciar Sesión' })).toBeNull();
   });
 });

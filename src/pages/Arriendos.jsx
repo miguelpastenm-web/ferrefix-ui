@@ -8,7 +8,7 @@ import {
   IMAGENES_MAQUINARIAS
 } from '../data/maquinarias';
 import EspacioImagen from '../components/EspacioImagen';
-import { obtenerSesionActiva } from '../data/auth';
+import { useAuth } from '../context/authContexto';
 import { REGIONES_CHILE, REGION_POR_DEFECTO, normalizarRegion, obtenerComunas, obtenerComunaPorDefecto } from '../data/chile';
 import {
   validadores,
@@ -35,7 +35,7 @@ const REGLAS_VALIDACION = {
 
 function Arriendos() {
   const navigate = useNavigate();
-  const sesion = obtenerSesionActiva();
+  const { usuario: sesion } = useAuth();
   const [maquinarias, setMaquinarias] = useState(obtenerMaquinarias);
   const [maquinaSeleccionada, setMaquinaSeleccionada] = useState(null);
   const [contratoGenerado, setContratoGenerado] = useState(null);
@@ -72,7 +72,7 @@ function Arriendos() {
   };
 
   const abrirModalArriendo = (maq) => {
-    const sesionActiva = obtenerSesionActiva();
+    const sesionActiva = sesion;
     if (!sesionActiva) {
       mostrarToast({
         titulo: 'Inicio de Sesión Requerido',

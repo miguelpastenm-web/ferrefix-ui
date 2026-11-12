@@ -8,7 +8,7 @@ import {
   obtenerTotalesCarrito, 
   EVENTO_CARRITO_ACTUALIZADO 
 } from '../data/carrito';
-import { obtenerSesionActiva } from '../data/auth';
+import { useAuth } from '../context/authContexto';
 import { crearOrden } from '../data/ordenes';
 import { obtenerProductoPorId, actualizarProducto } from '../data/productos';
 import { REGIONES_CHILE, REGION_POR_DEFECTO, normalizarRegion, obtenerComunas, obtenerComunaPorDefecto } from '../data/chile';
@@ -32,7 +32,7 @@ const REGLAS_VALIDACION = {
 function Carrito() {
   const [items, setItems] = useState(obtenerCarrito);
   const [totales, setTotales] = useState(obtenerTotalesCarrito);
-  const [sesion] = useState(obtenerSesionActiva);
+  const { usuario: sesion } = useAuth();
 
   // Pasos: 'carrito' | 'checkout' | 'exito' | 'error'
   const [pasoActual, setPasoActual] = useState('carrito');
@@ -150,7 +150,7 @@ function Carrito() {
     // 2. Registrar la orden en el módulo de órdenes
     const ordenGenerada = crearOrden({
       idOrden: `ORD-${Date.now().toString().slice(-6)}`,
-      idUsuario: sesion ? sesion.idUsuario : null,
+      idUsuario: sesion ? sesion.id : null,
       cliente: {
         nombre: formCliente.nombre || (sesion ? sesion.nombre : ''),
         rut: formCliente.rut || (sesion ? (sesion.rut || '15.432.890-K') : ''),

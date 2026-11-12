@@ -1,7 +1,7 @@
 import { mostrarToast } from "../components/ToastNotificacion";
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { obtenerSesionActiva } from '../data/auth';
+import { useAuth } from '../context/authContexto';
 import { REGIONES_CHILE, REGION_POR_DEFECTO } from '../data/chile';
 import {
   validadores,
@@ -20,7 +20,7 @@ const REGLAS_VALIDACION = {
 };
 
 function ContactoCotizacion() {
-  const sesion = obtenerSesionActiva();
+  const { usuario: sesion } = useAuth();
 
   const valorInicial = {
     nombre: sesion ? sesion.nombre : '',
