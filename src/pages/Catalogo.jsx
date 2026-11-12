@@ -1,32 +1,26 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ProductGrid from '../components/ProductGrid';
-import { 
-  obtenerProductos, 
-  CATEGORIAS_PRODUCTOS, 
-  EVENTO_PRODUCTOS_ACTUALIZADOS 
-} from '../data/productos';
+import { IndicadorCarga } from '../components/EsperarSesion';
+import ErrorCarga from '../components/ErrorCarga';
+import { CATEGORIAS_PRODUCTOS } from '../data/categorias';
+import { listarProductos, CATEGORIA_TODAS } from '../api/productos';
+import { useCarga } from '../hooks/useCarga';
 
 function Catalogo() {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Estado dinámico de productos conectados con localStorage
-  const [productos, setProductos] = useState(obtenerProductos);
-
-  // Escuchar cambios en localStorage (ej. cuando se crea/edita un producto en el admin)
-  useEffect(() => {
-    const handleActualizacion = () => {
-      setProductos(obtenerProductos());
-    };
-
-    window.addEventListener(EVENTO_PRODUCTOS_ACTUALIZADOS, handleActualizacion);
-    return () => {
-      window.removeEventListener(EVENTO_PRODUCTOS_ACTUALIZADOS, handleActualizacion);
-    };
-  }, []);
-
   // Derivar la categoría seleccionada directamente desde la URL
-  const categoriaSeleccionada = searchParams.get('categoria') || 'Todas';
+  const categoriaSeleccionada = searchParams.get('categoria') || CATEGORIA_TODAS;
+  const categoriaConocida = CATEGORIAS_PRODUCTOS.find((c) => c.toLowerCase() === categoriaSeleccionada.toLowerCase());
+
+  // La categoría se filtra en el servidor ("Todas" NO se envía: no es una categoría del backend). Una categoría
+  // desconocida en la URL no se consulta: se muestra el catálogo vacío en vez de provocar un 400.
+  const { datos, cargando, error, recargar } = useCarga(
+    () => (categoriaConocida ? listarProductos({ categoria: categoriaConocida }) : Promise.resolve([])),
+    categoriaConocida ?? categoriaSeleccionada
+  );
+  const productos = useMemo(() => datos ?? [], [datos]);
   const [busquedaTexto, setBusquedaTexto] = useState('');
   const [ordenPrecio, setOrdenPrecio] = useState('default');
 
@@ -37,7 +31,7 @@ function Catalogo() {
 
   // Manejar cambio de categoría y actualizar URL de forma reactiva
   const handleCambiarCategoria = (cat) => {
-    if (cat === 'Todas') {
+    if (cat === CATEGORIA_TODAS) {
       searchParams.delete('categoria');
       setSearchParams(searchParams);
     } else {
@@ -63,13 +57,6 @@ function Catalogo() {
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '');
 
-    // Filtrar por categoría
-    if (categoriaSeleccionada !== 'Todas') {
-      resultado = resultado.filter(
-        (p) => p.categoria.toLowerCase() === categoriaSeleccionada.toLowerCase()
-      );
-    }
-
     // Filtrar por texto (nombre o marca)
     if (busquedaTexto.trim() !== '') {
       const termino = normalizarTexto(busquedaTexto.trim());
@@ -88,11 +75,11 @@ function Catalogo() {
     } else if (ordenPrecio === 'nombre-asc') {
       resultado.sort((a, b) => a.nombre.localeCompare(b.nombre));
     } else if (ordenPrecio === 'ultimas-llegadas') {
-      resultado.reverse(); // Los últimos agregados aparecen primero
+      resultado.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))); // más recientes primero
     }
 
     return resultado;
-  }, [productos, categoriaSeleccionada, busquedaTexto, ordenPrecio]);
+  }, [productos, busquedaTexto, ordenPrecio]);
 
   return (
     <div className="catalogo-page py-4 py-md-5">
@@ -168,7 +155,7 @@ function Catalogo() {
             </div>
 
             {/* Botón reset rápido si hay filtros activos */}
-            {(categoriaSeleccionada !== 'Todas' || busquedaTexto !== '' || ordenPrecio !== 'default') && (
+            {(categoriaSeleccionada !== CATEGORIA_TODAS || busquedaTexto !== '' || ordenPrecio !== 'default') && (
               <div className="col-12 col-sm-auto">
                 <button
                   type="button"
@@ -211,10 +198,14 @@ function Catalogo() {
         </div>
 
         {/* Grilla de Productos */}
-        <ProductGrid 
-          productos={productosFiltrados} 
-          onResetFilters={handleResetFilters}
-        />
+        {cargando && <IndicadorCarga etiqueta="Cargando productos…" />}
+        {error && <ErrorCarga error={error} onReintentar={recargar} titulo="No pudimos cargar el catálogo" />}
+        {!cargando && !error && (
+          <ProductGrid
+            productos={productosFiltrados}
+            onResetFilters={handleResetFilters}
+          />
+        )}
 
       </div>
     </div>

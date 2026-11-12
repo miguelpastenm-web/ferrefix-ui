@@ -1,180 +1,281 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  obtenerCarrito, 
-  actualizarCantidad, 
-  eliminarDelCarrito, 
-  vaciarCarrito, 
-  obtenerTotalesCarrito, 
-  EVENTO_CARRITO_ACTUALIZADO 
+import {
+  obtenerCarrito,
+  actualizarCantidad,
+  eliminarDelCarrito,
+  vaciarCarrito,
+  guardarCarrito,
+  calcularTotales,
+  EVENTO_CARRITO_ACTUALIZADO
 } from '../data/carrito';
 import { useAuth } from '../context/authContexto';
-import { crearOrden } from '../data/ordenes';
-import { obtenerProductoPorId, actualizarProducto } from '../data/productos';
+import { listarProductos } from '../api/productos';
+import { crearOrden } from '../api/ordenes';
+import { ApiError, erroresPorCampo } from '../api/errores';
+import { useCarga } from '../hooks/useCarga';
+import { sincronizarCarrito, detectarProblemas, PROBLEMA } from '../utils/carritoSync';
+import { esConflictoDeBloqueo, marcasDeError, MENSAJE_COMPRA_SIN_CONFIRMAR, MENSAJE_SESION_EXPIRADA } from '../utils/errorOrden';
+import { NOTA_ESTIMACION, TEXTO_ENVIO_GRATIS } from '../utils/envio';
+import { METODOS_PAGO } from '../utils/estadosOrden';
+import { formatearCLP } from '../utils/formato';
+import Boleta from '../components/Boleta';
 import { REGIONES_CHILE, REGION_POR_DEFECTO, normalizarRegion, obtenerComunas, obtenerComunaPorDefecto } from '../data/chile';
-import {
-  validadores,
-  validarFormulario,
-  formatearRut,
-  formatearTelefono
-} from '../data/validaciones';
+import { validadores, validarFormulario, formatearTelefono } from '../data/validaciones';
 
-// Reglas de validación del formulario de despacho.
-const REGLAS_VALIDACION = {
-  nombre: validadores.nombre,
-  rut: validadores.rut,
-  email: validadores.email,
+// Mismas reglas que el backend (CrearOrdenRequestDto): teléfono, dirección (≤200), región y comuna (≤80, obligatorias),
+// indicaciones (≤500). La interfaz es algo más estricta en teléfono y dirección (formato chileno, ≤80).
+const REGLAS_ENVIO = {
   telefono: validadores.telefono,
   direccion: validadores.direccion,
-  comuna: validadores.requerido('La comuna')
+  region: validadores.requerido('La región'),
+  comuna: validadores.requerido('La comuna'),
+  indicaciones: validadores.indicaciones
 };
 
-function Carrito() {
-  const [items, setItems] = useState(obtenerCarrito);
-  const [totales, setTotales] = useState(obtenerTotalesCarrito);
-  const { usuario: sesion } = useAuth();
+const CAMPO_DEL_BACKEND = { telefono: 'telefono', direccionEnvio: 'direccion', region: 'region', comuna: 'comuna', indicaciones: 'indicaciones' };
 
-  // Pasos: 'carrito' | 'checkout' | 'exito' | 'error'
+function Carrito() {
+  const { usuario: sesion, esAdmin, esCliente } = useAuth();
+  const [items, setItems] = useState(obtenerCarrito);
+  const totales = useMemo(() => calcularTotales(items), [items]);
+
+  // Pasos: 'carrito' | 'checkout' | 'exito'
   const [pasoActual, setPasoActual] = useState('carrito');
+  // El checkout exige sesión: si deja de haberla (venció, o se cerró en otra pestaña) se muestra el carrito, nunca una
+  // pantalla vacía. Se deduce al renderizar; `pasoActual` conserva lo elegido por si la sesión vuelve.
+  const paso = pasoActual === 'checkout' && !sesion ? 'carrito' : pasoActual;
   const [ordenCreada, setOrdenCreada] = useState(null);
   const [alertaStock, setAlertaStock] = useState(null);
+  const [precioAvisoOculto, setPrecioAvisoOculto] = useState(false);
 
-  // Formulario de despacho (Inicia vacío con placeholders de ejemplo; autocompleta nombre y correo si hay sesión)
+  // Rechazo del servidor al comprar: mensaje general + líneas marcadas.
+  const [errorCompra, setErrorCompra] = useState(null); // { tipo: 'sin-confirmar'|'sesion'|'ocupado'|'stock'|'otro', mensaje, detalles }
+  const [marcas, setMarcas] = useState({ datos: {}, base: null }); // líneas marcadas por el rechazo y el catálogo vigente en ese momento
+  const [enviando, setEnviando] = useState(false);
+  const enviandoRef = useRef(false);
+
+  // Formulario de envío: solo los datos que el backend acepta. Nombre, RUT y correo salen de la sesión (token).
   const regionInicial = normalizarRegion(sesion?.region || REGION_POR_DEFECTO);
   const [regionSeleccionada, setRegionSeleccionada] = useState(regionInicial);
-  const [formCliente, setFormCliente] = useState({
-    nombre: sesion ? sesion.nombre : '',
-    rut: sesion ? (sesion.rut || '15.432.890-K') : '',
-    email: sesion ? sesion.email : '',
-    telefono: sesion ? (sesion.telefono || '+56 9 8765 4321') : '',
-    direccion: sesion ? (sesion.direccion || 'Av. Providencia 1240, Depto 502') : '',
+  const [formEnvio, setFormEnvio] = useState({
+    telefono: sesion?.telefono ?? '',
+    direccion: sesion?.direccion ?? '',
     region: regionInicial,
-    comuna: sesion && sesion.comuna ? sesion.comuna : obtenerComunaPorDefecto(REGION_POR_DEFECTO),
+    comuna: sesion?.comuna || obtenerComunaPorDefecto(regionInicial),
     indicaciones: '',
-    metodoEntrega: 'despacho',
-    metodoPago: 'WebPay Plus (Débito)'
+    metodoPago: METODOS_PAGO[0].valor
   });
   const [errores, setErrores] = useState({});
   const [touched, setTouched] = useState({});
 
-  // Sincronizar en tiempo real
+  // Sincronizar en tiempo real con el almacenamiento
   useEffect(() => {
-    const handleActualizar = () => {
-      setItems(obtenerCarrito());
-      setTotales(obtenerTotalesCarrito());
-    };
+    const handleActualizar = () => setItems(obtenerCarrito());
     window.addEventListener(EVENTO_CARRITO_ACTUALIZADO, handleActualizar);
     return () => window.removeEventListener(EVENTO_CARRITO_ACTUALIZADO, handleActualizar);
   }, []);
 
-  // Formateador CLP
-  const formatearCLP = (valor) => {
-    return new Intl.NumberFormat('es-CL', {
-      style: 'currency',
-      currency: 'CLP',
-      maximumFractionDigits: 0
-    }).format(valor || 0);
-  };
+  // Una sola llamada a GET /productos concilia el carrito con el catálogo real: actualiza precio y stock guardados
+  // (el cambio de precio avisa pero no bloquea) y permite detectar productos que ya no existen o sin stock.
+  const itemsRef = useRef(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  });
+  const { datos: catalogo, error: errorCatalogo, recargar: recargarCatalogo } = useCarga(async () => {
+    if (obtenerCarrito().length === 0) return { productos: null, cambiosPrecio: [] };
+    const productos = await listarProductos();
+    const resultado = sincronizarCarrito(obtenerCarrito(), productos);
+    if (resultado.huboCambios) guardarCarrito(resultado.items);
+    return { productos, cambiosPrecio: resultado.cambiosPrecio };
+  }, 'carrito');
+
+  const problemas = useMemo(() => detectarProblemas(items, catalogo?.productos), [items, catalogo]);
+  // Las marcas del servidor valen mientras no llegue un catálogo más nuevo: desde entonces mandan `problemas`.
+  const marcasServidor = marcas.base === catalogo ? marcas.datos : {};
+  const hayBloqueo = Object.keys(problemas).length > 0 || Object.keys(marcasServidor).length > 0;
+  const cambiosPrecio = precioAvisoOculto ? [] : (catalogo?.cambiosPrecio ?? []);
+
+  const quitarMarca = (productoId) =>
+    setMarcas((previas) => {
+      if (!(productoId in previas.datos)) return previas;
+      const datos = { ...previas.datos };
+      delete datos[productoId];
+      return { ...previas, datos };
+    });
 
   // Controles de cantidad con validación estricta de stock
-  const handleModificarCantidad = (idProducto, nuevaCantidad) => {
+  const handleModificarCantidad = (productoId, nuevaCantidad) => {
     setAlertaStock(null);
-    const resultado = actualizarCantidad(idProducto, nuevaCantidad);
+    quitarMarca(productoId);
+    const resultado = actualizarCantidad(productoId, nuevaCantidad);
     if (resultado && resultado.error) {
       setAlertaStock(resultado.error);
       setTimeout(() => setAlertaStock(null), 4000);
     }
   };
 
-  const handleEliminarItem = (idProducto) => {
-    eliminarDelCarrito(idProducto);
+  const handleEliminarItem = (productoId) => {
+    quitarMarca(productoId);
+    eliminarDelCarrito(productoId);
   };
 
   const handleVaciar = () => {
     if (window.confirm('¿Seguro que deseas vaciar todos los productos del carrito?')) {
+      setMarcas({ datos: {}, base: null });
       vaciarCarrito();
     }
   };
 
-  // ---- Validación del formulario de despacho ----
+  // ---- Validación del formulario de envío ----
   const validarCampo = (campo, valor) => {
-    const validador = REGLAS_VALIDACION[campo];
+    const validador = REGLAS_ENVIO[campo];
     if (!validador) return;
-    const mensaje = validador(valor);
-    setErrores((prev) => ({ ...prev, [campo]: mensaje }));
+    setErrores((prev) => ({ ...prev, [campo]: validador(valor) }));
   };
 
   const handleChange = (campo, valor) => {
-    setFormCliente((prev) => ({ ...prev, [campo]: valor }));
+    setFormEnvio((prev) => ({ ...prev, [campo]: valor }));
     if (touched[campo]) validarCampo(campo, valor);
   };
 
   const handleBlur = (campo) => {
     setTouched((prev) => ({ ...prev, [campo]: true }));
-    validarCampo(campo, formCliente[campo]);
+    validarCampo(campo, formEnvio[campo]);
   };
 
   const claseCampo = (campo, base = 'form-control form-control-sm rounded-1') =>
     `${base}${errores[campo] ? ' is-invalid' : ''}`;
 
   const handleCambiarRegion = (nuevaRegion) => {
-    const regionNorm = normalizarRegion(nuevaRegion);
-    setRegionSeleccionada(regionNorm);
-    const comuna = obtenerComunaPorDefecto(nuevaRegion);
-    setFormCliente((prev) => ({ ...prev, region: nuevaRegion, comuna }));
+    setRegionSeleccionada(normalizarRegion(nuevaRegion));
+    setFormEnvio((prev) => ({ ...prev, region: nuevaRegion, comuna: obtenerComunaPorDefecto(nuevaRegion) }));
     setErrores((prev) => ({ ...prev, comuna: '' }));
   };
 
-  // Procesar orden / checkout
+  // ---- Confirmar compra: POST /ordenes ----
+  const interpretarRechazo = (error) => {
+    if (!(error instanceof ApiError)) {
+      setErrorCompra({ tipo: 'otro', mensaje: 'Ocurrió un error inesperado. Revisa Mis compras antes de volver a intentar.', detalles: [] });
+      return;
+    }
+    // 401: la sesión ya no es válida (el cliente HTTP intentó renovarla y no se pudo). La orden NO se creó. Se vuelve al
+    // carrito, que se conserva, con un mensaje claro y el acceso para iniciar sesión.
+    if (error.status === 401) {
+      setErrorCompra({ tipo: 'sesion', mensaje: MENSAJE_SESION_EXPIRADA, detalles: [] });
+      setPasoActual('carrito');
+      return;
+    }
+    // Sin respuesta (red caída, tiempo agotado) o fallo del servidor: NO sabemos si la orden se creó. No se vacía el
+    // carrito ni se reintenta solo.
+    if (error.esTransitorio) {
+      setErrorCompra({ tipo: 'sin-confirmar', mensaje: MENSAJE_COMPRA_SIN_CONFIRMAR, detalles: [] });
+      return;
+    }
+    if (esConflictoDeBloqueo(error)) {
+      setErrorCompra({ tipo: 'ocupado', mensaje: error.mensaje, detalles: [] });
+      return;
+    }
+    if (error.status === 409 || error.status === 404) {
+      setMarcas({ datos: marcasDeError(error, itemsRef.current), base: catalogo });
+      setErrorCompra({ tipo: 'stock', mensaje: error.mensaje, detalles: error.detalles });
+      setPasoActual('carrito');
+      recargarCatalogo(); // trae el stock vigente para ofrecer "Ajustar" / "Quitar"
+      return;
+    }
+    if (error.status === 400) {
+      const delServidor = erroresPorCampo(error);
+      const mapeados = {};
+      Object.entries(CAMPO_DEL_BACKEND).forEach(([campoServidor, campo]) => {
+        if (delServidor[campoServidor]) mapeados[campo] = delServidor[campoServidor];
+      });
+      setErrores((prev) => ({ ...prev, ...mapeados }));
+      setErrorCompra({ tipo: 'otro', mensaje: error.mensaje, detalles: error.detalles });
+      return;
+    }
+    setErrorCompra({ tipo: 'otro', mensaje: error.mensaje, detalles: error.detalles });
+  };
+
+  const confirmarCompra = async () => {
+    if (enviandoRef.current || items.length === 0) return;
+    enviandoRef.current = true;
+    setEnviando(true);
+    setErrorCompra(null);
+    try {
+      const orden = await crearOrden({
+        items: items.map((i) => ({ productoId: i.productoId, cantidad: i.cantidad })),
+        metodoPago: formEnvio.metodoPago,
+        telefono: formEnvio.telefono,
+        direccionEnvio: formEnvio.direccion,
+        region: formEnvio.region,
+        comuna: formEnvio.comuna,
+        indicaciones: formEnvio.indicaciones
+      });
+      vaciarCarrito(); // solo cuando el servidor confirmó (201)
+      setOrdenCreada(orden);
+      setPasoActual('exito');
+      window.scrollTo(0, 0);
+    } catch (error) {
+      interpretarRechazo(error);
+    } finally {
+      enviandoRef.current = false;
+      setEnviando(false);
+    }
+  };
+
   const handleProcesarCompra = (e) => {
     e.preventDefault();
-
-    if (items.length === 0) return;
-
-    const nuevosErrores = validarFormulario(REGLAS_VALIDACION, formCliente);
+    if (items.length === 0 || hayBloqueo) return;
+    const nuevosErrores = validarFormulario(REGLAS_ENVIO, formEnvio);
     setErrores(nuevosErrores);
-    setTouched(
-      Object.keys(REGLAS_VALIDACION).reduce((acc, campo) => ({ ...acc, [campo]: true }), {})
-    );
+    setTouched(Object.keys(REGLAS_ENVIO).reduce((acc, campo) => ({ ...acc, [campo]: true }), {}));
     if (Object.keys(nuevosErrores).length > 0) return;
-
-    // 1. Descontar stock de la base de datos simulada
-    items.forEach((item) => {
-      const prod = obtenerProductoPorId(item.idProducto);
-      if (prod) {
-        const nuevoStock = Math.max(0, Number(prod.stock) - Number(item.cantidad));
-        actualizarProducto(item.idProducto, { stock: nuevoStock });
-      }
-    });
-
-    // 2. Registrar la orden en el módulo de órdenes
-    const ordenGenerada = crearOrden({
-      idOrden: `ORD-${Date.now().toString().slice(-6)}`,
-      idUsuario: sesion ? sesion.id : null,
-      cliente: {
-        nombre: formCliente.nombre || (sesion ? sesion.nombre : ''),
-        rut: formCliente.rut || (sesion ? (sesion.rut || '15.432.890-K') : ''),
-        email: formCliente.email || (sesion ? sesion.email : ''),
-        telefono: formCliente.telefono || (sesion ? (sesion.telefono || '+56 9 8765 4321') : ''),
-        direccion: `${formCliente.direccion || (sesion ? sesion.direccion : '')}, ${formCliente.comuna}, ${formCliente.region}`
-      },
-      items: items.map((i) => ({
-        idProducto: i.idProducto,
-        nombre: i.nombre,
-        cantidad: i.cantidad,
-        precioUnitario: i.precioVenta
-      })),
-      total: totales.total,
-      metodoPago: formCliente.metodoPago,
-      estado: 'Completada'
-    });
-
-    // 3. Vaciar carrito y mostrar confirmación
-    vaciarCarrito();
-    setOrdenCreada(ordenGenerada);
-    setPasoActual('exito');
-    window.scrollTo(0, 0);
+    confirmarCompra();
   };
+
+  const avisoDeLinea = (item) => {
+    const problema = problemas[item.productoId];
+    const marca = marcasServidor[item.productoId];
+    if (!problema && !marca) return null;
+    return (
+      <div className="small text-danger mt-1" role="alert">
+        {problema?.tipo === PROBLEMA.NO_EXISTE && <span>Este producto ya no está disponible en el catálogo.</span>}
+        {problema?.tipo === PROBLEMA.AGOTADO && <span>Este producto está agotado.</span>}
+        {problema?.tipo === PROBLEMA.EXCEDE && <span>Solo quedan {problema.stockDisponible} unidades disponibles.</span>}
+        {marca && !problema && <span>{marca}</span>}
+        <div className="d-flex flex-wrap gap-2 mt-1">
+          {problema?.tipo === PROBLEMA.EXCEDE && (
+            <button type="button" className="btn btn-sm btn-outline-dark" onClick={() => handleModificarCantidad(item.productoId, problema.stockDisponible)}>
+              Ajustar a {problema.stockDisponible}
+            </button>
+          )}
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => handleEliminarItem(item.productoId)}>
+            Quitar
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const resumenCostos = (
+    <>
+      <div className="d-flex justify-content-between mb-1 marca-fino">
+        <span>Artículos ({totales.totalArticulos}):</span>
+        <span className="marca-mono marca-strong">{formatearCLP(totales.subtotal)}</span>
+      </div>
+      <div className="d-flex justify-content-between mb-2 marca-fino">
+        <span>Despacho estimado:</span>
+        <span className="marca-mono marca-strong marca-exito">
+          {totales.despachoEstimado === 0 ? 'Gratis' : formatearCLP(totales.despachoEstimado)}
+        </span>
+      </div>
+      <div className="d-flex justify-content-between align-items-center pt-2 border-top">
+        <span className="marca-bold marca-tam-5">Total estimado:</span>
+        <span className="marca-total">{formatearCLP(totales.totalEstimado)}</span>
+      </div>
+      <small className="d-block text-muted mt-2">{NOTA_ESTIMACION}</small>
+    </>
+  );
 
   return (
     <div className="carrito-page py-4 py-lg-5">
@@ -186,51 +287,90 @@ function Carrito() {
             <li className="breadcrumb-item"><Link to="/">Inicio</Link></li>
             <li className="breadcrumb-item"><Link to="/catalogo">Catálogo</Link></li>
             <li className="breadcrumb-item active" aria-current="page">
-              {pasoActual === 'carrito' && 'Carrito de Compras'}
-              {pasoActual === 'checkout' && 'Paso de Pago y Despacho'}
-              {pasoActual === 'exito' && 'Confirmación de Compra'}
+              {paso === 'carrito' && 'Carrito de Compras'}
+              {paso === 'checkout' && 'Paso de Pago y Despacho'}
+              {paso === 'exito' && 'Confirmación de Compra'}
             </li>
           </ol>
         </nav>
 
-        {/* Alerta de validación de stock */}
         {alertaStock && (
           <div className="alert alert-warning alert-dismissible fade show rounded-2 shadow-sm d-flex align-items-center mb-4" role="alert">
             <i className="bi bi-exclamation-triangle-fill marca-icono me-2"></i>
             <div>{alertaStock}</div>
-            <button type="button" className="btn-close" onClick={() => setAlertaStock(null)}></button>
+            <button type="button" className="btn-close" aria-label="Cerrar" onClick={() => setAlertaStock(null)}></button>
+          </div>
+        )}
+
+        {/* Rechazo o duda al confirmar la compra */}
+        {errorCompra && paso !== 'exito' && (
+          <div className={`alert ${errorCompra.tipo === 'sin-confirmar' ? 'alert-warning' : 'alert-danger'} rounded-2 shadow-sm mb-4`} role="alert">
+            <p className="mb-1 fw-semibold" data-testid="mensaje-error-compra">{errorCompra.mensaje}</p>
+            {errorCompra.detalles.length > 0 && (
+              <ul className="mb-2 small">
+                {errorCompra.detalles.map((detalle) => (
+                  <li key={detalle}>{detalle}</li>
+                ))}
+              </ul>
+            )}
+            <div className="d-flex flex-wrap gap-2">
+              {errorCompra.tipo === 'sin-confirmar' && (
+                <Link to="/cuenta?tab=compras" className="btn btn-sm btn-dark">Revisar Mis compras</Link>
+              )}
+              {errorCompra.tipo === 'sesion' && (
+                <Link to={`/login?next=${encodeURIComponent('/carrito')}`} className="btn btn-sm btn-dark">Iniciar sesión</Link>
+              )}
+              {errorCompra.tipo === 'ocupado' && (
+                <button type="button" className="btn btn-sm btn-dark" onClick={confirmarCompra} disabled={enviando}>
+                  Reintentar
+                </button>
+              )}
+            </div>
           </div>
         )}
 
         {/* ============================================================== */}
         {/* PASO 1: VISTA DE PRODUCTOS EN EL CARRITO                      */}
         {/* ============================================================== */}
-        {pasoActual === 'carrito' && (
+        {paso === 'carrito' && (
           <div>
             <div className="d-flex justify-content-between align-items-center mb-3">
               <div>
-                <h1 className="marca-titulo marca-tam-2 mb-1">
-                  Carrito de Compras
-                </h1>
+                <h1 className="marca-titulo marca-tam-2 mb-1">Carrito de Compras</h1>
                 <p className="marca-nota mb-0">
                   Revisa tus productos seleccionados y confirma las cantidades antes de pagar.
                 </p>
               </div>
-
               {items.length > 0 && (
-                <button 
-                  type="button" 
-                  className="btn btn-outline-danger btn-sm rounded-1"
-                  onClick={handleVaciar}
-                >
+                <button type="button" className="btn btn-outline-danger btn-sm rounded-1" onClick={handleVaciar}>
                   <i className="bi bi-trash3 me-1"></i>
                   Vaciar Carrito
                 </button>
               )}
             </div>
 
+            {errorCatalogo && items.length > 0 && (
+              <div className="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2" role="alert">
+                <span>No pudimos verificar la disponibilidad actual de tus productos. Puedes continuar: el servidor la validará al comprar.</span>
+                <button type="button" className="btn btn-sm btn-outline-dark" onClick={recargarCatalogo}>Reintentar</button>
+              </div>
+            )}
+
+            {cambiosPrecio.length > 0 && (
+              <div className="alert alert-info alert-dismissible rounded-2" role="status">
+                <strong>Actualizamos algunos precios:</strong>
+                <ul className="mb-0 small">
+                  {cambiosPrecio.map((c) => (
+                    <li key={c.productoId}>
+                      {c.nombre}: de {formatearCLP(c.anterior)} a {formatearCLP(c.nuevo)}
+                    </li>
+                  ))}
+                </ul>
+                <button type="button" className="btn-close" aria-label="Cerrar aviso de precios" onClick={() => setPrecioAvisoOculto(true)}></button>
+              </div>
+            )}
+
             {items.length === 0 ? (
-              // Carrito Vacío
               <div className="bg-white border rounded-1 p-5 marca-centro my-4 shadow-sm">
                 <i className="bi bi-cart-x carrito-vacio-icon mb-3 d-block"></i>
                 <h2 className="marca-titulo marca-tam-4 mb-2">Tu carrito está actualmente vacío</h2>
@@ -243,9 +383,8 @@ function Carrito() {
                 </Link>
               </div>
             ) : (
-              // Tabla de productos y resumen
               <div className="row g-4">
-                
+
                 {/* Columna Izquierda: Listado de Productos */}
                 <div className="col-12 col-lg-8">
                   <div className="bg-white border rounded-1 shadow-sm p-3">
@@ -262,123 +401,111 @@ function Carrito() {
                           </tr>
                         </thead>
                         <tbody>
-                          {items.map((item) => (
-                            <tr key={item.idProducto}>
-                              <td>
-                                <img 
-                                  src={item.imagen} 
-                                  alt={item.nombre} 
-                                  className="cart-item-img border rounded-1 bg-white object-fit-contain"
-                                  onError={(e) => { e.target.src = '/banner-web.webp'; }}
-                                />
-                              </td>
-                              <td>
-                                <Link 
-                                  to={`/producto/${item.idProducto}`} 
-                                  className="carrito-item-nombre d-block"
-                                >
-                                  {item.nombre}
-                                </Link>
-                                <small className="marca-muted">Marca: {item.marca} | Stock: {item.stock} unids.</small>
-                              </td>
-                              <td className="marca-derecha marca-nota marca-mono">
-                                {formatearCLP(item.precioVenta)}
-                              </td>
-                              <td className="marca-centro">
-                                <div className="input-group input-group-sm">
-                                  <button 
-                                    className="btn btn-outline-secondary" 
-                                    type="button"
-                                    onClick={() => handleModificarCantidad(item.idProducto, item.cantidad - 1)}
-                                  >
-                                    -
-                                  </button>
-                                  <input 
-                                    type="text" 
-                                    className="form-control marca-centro marca-bold bg-white"
-                                    value={item.cantidad} 
-                                    readOnly 
+                          {items.map((item) => {
+                            const conProblema = Boolean(problemas[item.productoId] || marcasServidor[item.productoId]);
+                            const noExiste = problemas[item.productoId]?.tipo === PROBLEMA.NO_EXISTE;
+                            return (
+                              <tr key={item.productoId} className={conProblema ? 'table-warning' : ''} data-testid={`linea-${item.productoId}`}>
+                                <td>
+                                  <img
+                                    src={item.imagen}
+                                    alt={item.nombre}
+                                    className="cart-item-img border rounded-1 bg-white object-fit-contain"
+                                    onError={(e) => { e.target.src = '/banner-web.webp'; }}
                                   />
-                                  <button 
-                                    className="btn btn-outline-secondary" 
+                                </td>
+                                <td>
+                                  <Link to={`/producto/${item.productoId}`} className="carrito-item-nombre d-block">
+                                    {item.nombre}
+                                  </Link>
+                                  <small className="marca-muted">Marca: {item.marca} | Stock: {item.stock} unids.</small>
+                                  {avisoDeLinea(item)}
+                                </td>
+                                <td className="marca-derecha marca-nota marca-mono">{formatearCLP(item.precioVenta)}</td>
+                                <td className="marca-centro">
+                                  <div className="input-group input-group-sm">
+                                    <button
+                                      className="btn btn-outline-secondary"
+                                      type="button"
+                                      aria-label={`Restar una unidad de ${item.nombre}`}
+                                      onClick={() => handleModificarCantidad(item.productoId, item.cantidad - 1)}
+                                      disabled={noExiste}
+                                    >
+                                      -
+                                    </button>
+                                    <input type="text" className="form-control marca-centro marca-bold bg-white" value={item.cantidad} readOnly aria-label={`Cantidad de ${item.nombre}`} />
+                                    <button
+                                      className="btn btn-outline-secondary"
+                                      type="button"
+                                      aria-label={`Sumar una unidad de ${item.nombre}`}
+                                      onClick={() => handleModificarCantidad(item.productoId, item.cantidad + 1)}
+                                      disabled={noExiste || item.cantidad >= item.stock}
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="marca-derecha marca-precio">{formatearCLP(item.precioVenta * item.cantidad)}</td>
+                                <td className="marca-derecha">
+                                  <button
                                     type="button"
-                                    onClick={() => handleModificarCantidad(item.idProducto, item.cantidad + 1)}
-                                    disabled={item.cantidad >= item.stock}
+                                    className="btn btn-sm btn-outline-danger border-0 p-1"
+                                    onClick={() => handleEliminarItem(item.productoId)}
+                                    title="Quitar producto"
+                                    aria-label={`Quitar ${item.nombre}`}
                                   >
-                                    +
+                                    <i className="bi bi-trash3"></i>
                                   </button>
-                                </div>
-                              </td>
-                              <td className="marca-derecha marca-precio">
-                                {formatearCLP(item.precioVenta * item.cantidad)}
-                              </td>
-                              <td className="marca-derecha">
-                                <button 
-                                  type="button" 
-                                  className="btn btn-sm btn-outline-danger border-0 p-1"
-                                  onClick={() => handleEliminarItem(item.idProducto)}
-                                  title="Quitar producto"
-                                >
-                                  <i className="bi bi-trash3"></i>
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
                   </div>
 
                   <div className="d-flex justify-content-between align-items-center mt-3">
-                    <Link to="/catalogo" className="btn btn-outline-dark btn-sm rounded-1">
-                      ← Seguir Comprando
-                    </Link>
-                    <span className="marca-nota">
-                      Precios con IVA incluido.
-                    </span>
+                    <Link to="/catalogo" className="btn btn-outline-dark btn-sm rounded-1">← Seguir Comprando</Link>
+                    <span className="marca-nota">Precios con IVA incluido.</span>
                   </div>
                 </div>
 
                 {/* Columna Derecha: Tarjeta de Resumen */}
                 <div className="col-12 col-lg-4">
                   <div className="bg-white border rounded-1 shadow-sm p-4">
-                    <h2 className="marca-titulo marca-tam-5 mb-3 border-bottom pb-2">
-                      Resumen del Pedido
-                    </h2>
+                    <h2 className="marca-titulo marca-tam-5 mb-3 border-bottom pb-2">Resumen del Pedido</h2>
+                    {resumenCostos}
 
-                    <div className="d-flex justify-content-between mb-2 marca-nota">
-                      <span>Artículos ({totales.totalArticulos}):</span>
-                      <span className="marca-mono marca-strong">{formatearCLP(totales.subtotal)}</span>
-                    </div>
-
-                    <div className="d-flex justify-content-between mb-3 marca-nota">
-                      <span>Despacho a domicilio:</span>
-                      <span className="marca-mono marca-strong marca-exito">
-                        {totales.despacho === 0 ? 'Gratis' : formatearCLP(totales.despacho)}
-                      </span>
-                    </div>
-
-                    <div className="cart-promo-alert alert alert-info py-2 px-3 marca-fino rounded-1 mb-3">
+                    <div className="cart-promo-alert alert alert-info py-2 px-3 marca-fino rounded-1 my-3">
                       <i className="bi bi-truck me-1"></i>
-                      Despacho gratis en compras superiores a $50.000 en la Región Metropolitana.
+                      {TEXTO_ENVIO_GRATIS}
                     </div>
 
-                    <hr />
+                    {hayBloqueo && (
+                      <div className="alert alert-warning py-2 px-3 marca-fino rounded-1" role="alert">
+                        Resuelve los avisos de tu carrito (ajusta o quita los productos marcados) para continuar.
+                      </div>
+                    )}
 
-                    <div className="d-flex justify-content-between align-items-center mb-4">
-                      <span className="marca-bold marca-tam-5">Total:</span>
-                      <span className="marca-total">
-                        {formatearCLP(totales.total)}
-                      </span>
-                    </div>
-
-                    <button 
-                      type="button" 
-                      className="btn btn-ambar w-100 marca-bold py-3 rounded-1 shadow-sm mb-2"
-                      onClick={() => setPasoActual('checkout')}
-                    >
-                      Continuar al Pago →
-                    </button>
+                    {esAdmin ? (
+                      <div className="alert alert-secondary py-2 px-3 marca-fino rounded-1 mb-0" role="note">
+                        Las cuentas de administrador no realizan compras. Ingresa con una cuenta de cliente para comprar.
+                      </div>
+                    ) : esCliente ? (
+                      <button
+                        type="button"
+                        className="btn btn-ambar w-100 marca-bold py-3 rounded-1 shadow-sm mb-2"
+                        onClick={() => { setErrorCompra(null); setPasoActual('checkout'); }}
+                        disabled={hayBloqueo}
+                      >
+                        Continuar al Pago →
+                      </button>
+                    ) : (
+                      <Link to={`/login?next=${encodeURIComponent('/carrito')}`} className="btn btn-ambar w-100 marca-bold py-3 rounded-1 shadow-sm mb-2">
+                        Inicia sesión para pagar
+                      </Link>
+                    )}
 
                     <div className="marca-centro marca-nota mt-2">
                       <i className="bi bi-shield-check me-1 marca-exito"></i>
@@ -395,40 +522,20 @@ function Carrito() {
         {/* ============================================================== */}
         {/* PASO 2: CHECKOUT (DATOS DE DESPACHO Y PAGO)                    */}
         {/* ============================================================== */}
-        {pasoActual === 'checkout' && (
+        {paso === 'checkout' && (
           <div className="row justify-content-center">
             <div className="col-12 col-lg-8">
               <div className="bg-white border rounded-1 shadow-sm p-4 p-md-5">
-                
+
                 <div className="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom">
                   <div>
-                    <h2 className="marca-titulo marca-tam-4 mb-1">
-                      Paso de Pago y Despacho
-                    </h2>
-                    <p className="marca-nota mb-0">
-                      Completa los datos de envío y selecciona tu método de pago.
-                    </p>
+                    <h2 className="marca-titulo marca-tam-4 mb-1">Paso de Pago y Despacho</h2>
+                    <p className="marca-nota mb-0">Completa los datos de envío y selecciona tu método de pago.</p>
                   </div>
-                  <button 
-                    type="button" 
-                    className="btn btn-outline-secondary btn-sm rounded-1"
-                    onClick={() => setPasoActual('carrito')}
-                  >
+                  <button type="button" className="btn btn-outline-secondary btn-sm rounded-1" onClick={() => setPasoActual('carrito')}>
                     ← Volver al Carrito
                   </button>
                 </div>
-
-                {!sesion && (
-                  <div className="alert alert-warning marca-fino mb-4 rounded-1 d-flex align-items-center justify-content-between">
-                    <div>
-                      <i className="bi bi-info-circle-fill me-1"></i>
-                      ¿Ya tienes cuenta? Inicia sesión para autocompletar tus datos.
-                    </div>
-                    <Link to="/login" className="btn btn-sm btn-dark rounded-1">
-                      Iniciar Sesión
-                    </Link>
-                  </div>
-                )}
 
                 {Object.values(errores).some(Boolean) && (
                   <div className="alert alert-danger marca-fino mb-4 rounded-1 d-flex align-items-center" role="alert">
@@ -437,199 +544,40 @@ function Carrito() {
                   </div>
                 )}
 
-                {sesion ? (
-                  // USUARIO REGISTRADO: DATOS AUTOMÁTICOS, SOLO PEDIR MÉTODO DE PAGO
-                  <form onSubmit={handleProcesarCompra} noValidate>
-                    <div className="border rounded-1 p-4 mb-4 bg-white shadow-sm">
-                      <div className="d-flex flex-wrap justify-content-between align-items-center pb-3 mb-3 border-bottom gap-2">
-                        <div className="d-flex align-items-center gap-2">
-                          <i className="bi bi-person-check-fill text-success fs-4"></i>
-                          <div>
-                            <h3 className="marca-titulo marca-tam-6 mb-0">Datos de Despacho del Cliente Registrado</h3>
-                            <span className="text-muted small">Tus datos de entrega fueron cargados automáticamente</span>
-                          </div>
-                        </div>
-                        <Link to="/cuenta" className="btn btn-outline-dark btn-sm rounded-1 px-3">
-                          <i className="bi bi-pencil me-1"></i> Modificar datos en mi cuenta
-                        </Link>
-                      </div>
-
-                      <div className="row g-3 small">
-                        <div className="col-12 col-md-6">
-                          <div className="p-2 bg-light rounded-1 border">
-                            <span className="text-muted d-block small">Destinatario:</span>
-                            <strong className="text-dark">{formCliente.nombre || sesion.nombre}</strong>
-                          </div>
-                        </div>
-                        <div className="col-12 col-md-6">
-                          <div className="p-2 bg-light rounded-1 border">
-                            <span className="text-muted d-block small">RUN / RUT:</span>
-                            <strong className="text-dark font-monospace">{formCliente.rut || sesion.rut || "15.432.890-K"}</strong>
-                          </div>
-                        </div>
-                        <div className="col-12 col-md-6">
-                          <div className="p-2 bg-light rounded-1 border">
-                            <span className="text-muted d-block small">Correo de Contacto:</span>
-                            <strong className="text-dark font-monospace">{formCliente.email || sesion.email}</strong>
-                          </div>
-                        </div>
-                        <div className="col-12 col-md-6">
-                          <div className="p-2 bg-light rounded-1 border">
-                            <span className="text-muted d-block small">Teléfono de Entrega:</span>
-                            <strong className="text-dark">{formCliente.telefono || sesion.telefono || "+56 9 8765 4321"}</strong>
-                          </div>
-                        </div>
-                        <div className="col-12">
-                          <div className="p-2 bg-light rounded-1 border">
-                            <span className="text-muted d-block small">Dirección de Despacho:</span>
-                            <strong className="text-dark">
-                              {formCliente.direccion || sesion.direccion || "Av. Providencia 1240, Depto 502"}, {formCliente.comuna || sesion.comuna || "Providencia"}, {formCliente.region || sesion.region || "Región Metropolitana"}
-                            </strong>
-                          </div>
-                        </div>
+                <form onSubmit={handleProcesarCompra} noValidate>
+                  <h3 className="checkout-section-title marca-titulo marca-tam-6 mb-3">1. Cliente</h3>
+                  <div className="row g-3 small mb-4">
+                    <div className="col-12 col-md-6">
+                      <div className="p-2 bg-light rounded-1 border">
+                        <span className="text-muted d-block small">Destinatario:</span>
+                        <strong className="text-dark">{sesion.nombre}</strong>
                       </div>
                     </div>
-
-                    <h3 className="checkout-section-title marca-titulo marca-tam-6 mb-3">
-                      Selecciona tu Método de Pago
-                    </h3>
-
-                    <div className="mb-4">
-                      <div className="form-check p-2 border rounded-1 mb-2 bg-light d-flex align-items-center">
-                        <input 
-                          className="form-check-input ms-1 me-3" 
-                          type="radio" 
-                          name="metodoPagoReg" 
-                          id="webpayReg" 
-                          value="WebPay Plus (Débito)"
-                          checked={formCliente.metodoPago === "WebPay Plus (Débito)"}
-                          onChange={(e) => setFormCliente({ ...formCliente, metodoPago: e.target.value })}
-                        />
-                        <label className="form-check-label marca-strong marca-fino flex-grow-1" htmlFor="webpayReg">
-                          WebPay Plus / RedCompra (Débito)
-                        </label>
-                      </div>
-
-                      <div className="form-check p-2 border rounded-1 mb-2 bg-light d-flex align-items-center">
-                        <input 
-                          className="form-check-input ms-1 me-3" 
-                          type="radio" 
-                          name="metodoPagoReg" 
-                          id="creditoReg" 
-                          value="Tarjeta de Crédito"
-                          checked={formCliente.metodoPago === "Tarjeta de Crédito"}
-                          onChange={(e) => setFormCliente({ ...formCliente, metodoPago: e.target.value })}
-                        />
-                        <label className="form-check-label marca-strong marca-fino flex-grow-1" htmlFor="creditoReg">
-                          Tarjeta de Crédito (3 cuotas sin interés)
-                        </label>
-                      </div>
-
-                      <div className="form-check p-2 border rounded-1 bg-light d-flex align-items-center">
-                        <input 
-                          className="form-check-input ms-1 me-3" 
-                          type="radio" 
-                          name="metodoPagoReg" 
-                          id="transferenciaReg" 
-                          value="Transferencia Bancaria"
-                          checked={formCliente.metodoPago === "Transferencia Bancaria"}
-                          onChange={(e) => setFormCliente({ ...formCliente, metodoPago: e.target.value })}
-                        />
-                        <label className="form-check-label marca-strong marca-fino flex-grow-1" htmlFor="transferenciaReg">
-                          Transferencia Bancaria Electrónica Directa
-                        </label>
+                    <div className="col-12 col-md-6">
+                      <div className="p-2 bg-light rounded-1 border">
+                        <span className="text-muted d-block small">RUN / RUT:</span>
+                        <strong className="text-dark font-monospace">{sesion.rut}</strong>
                       </div>
                     </div>
-
-                    {/* Resumen del cobro final */}
-                    <div className="p-3 bg-platino border rounded-1 mb-4">
-                      <div className="d-flex justify-content-between mb-1 marca-fino">
-                        <span>Total de productos:</span>
-                        <span className="marca-mono">{formatearCLP(totales.subtotal)}</span>
-                      </div>
-                      <div className="d-flex justify-content-between mb-2 marca-fino">
-                        <span>Costo de envío:</span>
-                        <span className="marca-mono marca-exito">
-                          {totales.despacho === 0 ? "Gratis" : formatearCLP(totales.despacho)}
-                        </span>
-                      </div>
-                      <div className="d-flex justify-content-between align-items-center pt-2 border-top">
-                        <span className="marca-bold marca-tam-5">Total a Pagar:</span>
-                        <span className="marca-total marca-exito">{formatearCLP(totales.total)}</span>
+                    <div className="col-12">
+                      <div className="p-2 bg-light rounded-1 border">
+                        <span className="text-muted d-block small">Correo de Contacto:</span>
+                        <strong className="text-dark font-monospace">{sesion.email}</strong>
                       </div>
                     </div>
+                  </div>
 
-                    <div className="d-flex justify-content-between">
-                      <button 
-                        type="button" 
-                        className="btn btn-outline-secondary btn-sm rounded-1"
-                        onClick={() => setPasoActual("carrito")}
-                      >
-                        ← Volver al Carrito
-                      </button>
-                      <button 
-                        type="submit" 
-                        className="btn btn-ambar btn-sm marca-strong rounded-1 px-4 py-2 shadow-sm"
-                      >
-                        Confirmar y Pagar {formatearCLP(totales.total)}
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  // USUARIO SIN SESIÓN (INVITADO): FORMULARIO COMPLETO
-                  <form onSubmit={handleProcesarCompra} noValidate>
-                  <h3 className="checkout-section-title marca-titulo marca-tam-6 mb-3">
-                    1. Información del Cliente
-                  </h3>
-
+                  <h3 className="checkout-section-title marca-titulo marca-tam-6 mb-3">2. Dirección y Opciones de Entrega</h3>
                   <div className="row g-3 mb-4">
                     <div className="col-12 col-md-6">
-                      <label className="form-label marca-label">Nombre y Apellido *</label>
-                      <input 
-                        type="text" 
-                        className={claseCampo('nombre')}
-                        placeholder="Ej: Pedro González"
-                        value={formCliente.nombre}
-                        onChange={(e) => handleChange('nombre', e.target.value)}
-                        onBlur={() => handleBlur('nombre')}
-                        required
-                      />
-                      {errores.nombre && <div className="invalid-feedback">{errores.nombre}</div>}
-                    </div>
-                    <div className="col-12 col-md-6">
-                      <label className="form-label marca-label">RUT *</label>
-                      <input 
-                        type="text" 
-                        className={claseCampo('rut')}
-                        placeholder="Ej: 12.345.678-9"
-                        value={formCliente.rut}
-                        onChange={(e) => handleChange('rut', formatearRut(e.target.value))}
-                        onBlur={() => handleBlur('rut')}
-                        maxLength={12}
-                        required
-                      />
-                      {errores.rut && <div className="invalid-feedback">{errores.rut}</div>}
-                    </div>
-                    <div className="col-12 col-md-6">
-                      <label className="form-label marca-label">Correo Electrónico *</label>
-                      <input 
-                        type="email" 
-                        className={claseCampo('email')}
-                        placeholder="ejemplo@correo.cl"
-                        value={formCliente.email}
-                        onChange={(e) => handleChange('email', e.target.value)}
-                        onBlur={() => handleBlur('email')}
-                        required
-                      />
-                      {errores.email && <div className="invalid-feedback">{errores.email}</div>}
-                    </div>
-                    <div className="col-12 col-md-6">
-                      <label className="form-label marca-label">Teléfono de Contacto *</label>
-                      <input 
-                        type="tel" 
+                      <label htmlFor="envio-telefono" className="form-label marca-label">Teléfono de Contacto *</label>
+                      <input
+                        id="envio-telefono"
+                        type="tel"
+                        autoComplete="tel"
                         className={claseCampo('telefono')}
                         placeholder="+56 9 1234 5678"
-                        value={formCliente.telefono}
+                        value={formEnvio.telefono}
                         onChange={(e) => handleChange('telefono', formatearTelefono(e.target.value))}
                         onBlur={() => handleBlur('telefono')}
                         inputMode="tel"
@@ -638,16 +586,11 @@ function Carrito() {
                       />
                       {errores.telefono && <div className="invalid-feedback">{errores.telefono}</div>}
                     </div>
-                  </div>
 
-                  <h3 className="checkout-section-title marca-titulo marca-tam-6 mb-3">
-                    2. Dirección y Opciones de Entrega
-                  </h3>
-
-                  <div className="row g-3 mb-4">
-                    <div className="col-12 col-md-5">
-                      <label className="form-label marca-label">Región *</label>
-                      <select 
+                    <div className="col-12 col-md-6">
+                      <label htmlFor="envio-region" className="form-label marca-label">Región *</label>
+                      <select
+                        id="envio-region"
                         className="form-select form-select-sm rounded-1"
                         value={regionSeleccionada}
                         onChange={(e) => handleCambiarRegion(e.target.value)}
@@ -658,34 +601,32 @@ function Carrito() {
                       </select>
                     </div>
 
-                    <div className="col-12 col-md-7">
-                      <label className="form-label marca-label">
-                        Comuna (Selecciona de las disponibles) *
-                      </label>
-                      <div className="input-group input-group-sm">
-                        <span className="input-group-text bg-light"><i className="bi bi-search marca-muted"></i></span>
-                        <select 
-                          className={`form-select form-select-sm rounded-end-1${errores.comuna ? ' is-invalid' : ''}`}
-                          value={formCliente.comuna}
-                          onChange={(e) => handleChange('comuna', e.target.value)}
-                          onBlur={() => handleBlur('comuna')}
-                          required
-                        >
-                          {obtenerComunas(regionSeleccionada).map((com) => (
-                            <option key={com} value={com}>{com}</option>
-                          ))}
-                        </select>
-                      </div>
+                    <div className="col-12 col-md-6">
+                      <label htmlFor="envio-comuna" className="form-label marca-label">Comuna *</label>
+                      <select
+                        id="envio-comuna"
+                        className={`form-select form-select-sm rounded-1${errores.comuna ? ' is-invalid' : ''}`}
+                        value={formEnvio.comuna}
+                        onChange={(e) => handleChange('comuna', e.target.value)}
+                        onBlur={() => handleBlur('comuna')}
+                        required
+                      >
+                        {obtenerComunas(regionSeleccionada).map((com) => (
+                          <option key={com} value={com}>{com}</option>
+                        ))}
+                      </select>
                       {errores.comuna && <div className="invalid-feedback d-block">{errores.comuna}</div>}
                     </div>
 
-                    <div className="col-12 col-md-8">
-                      <label className="form-label marca-label">Calle, Número y Depto *</label>
-                      <input 
-                        type="text" 
+                    <div className="col-12 col-md-6">
+                      <label htmlFor="envio-direccion" className="form-label marca-label">Calle, Número y Depto *</label>
+                      <input
+                        id="envio-direccion"
+                        type="text"
+                        autoComplete="street-address"
                         className={claseCampo('direccion')}
                         placeholder="Ej: Av. Providencia 1240, Depto 502"
-                        value={formCliente.direccion}
+                        value={formEnvio.direccion}
                         onChange={(e) => handleChange('direccion', e.target.value)}
                         onBlur={() => handleBlur('direccion')}
                         required
@@ -693,96 +634,52 @@ function Carrito() {
                       {errores.direccion && <div className="invalid-feedback">{errores.direccion}</div>}
                     </div>
 
-                    <div className="col-12 col-md-4">
-                      <label className="form-label marca-label">Indicaciones de Entrega (Opcional)</label>
-                      <input 
-                        type="text" 
-                        className="form-control form-control-sm rounded-1"
+                    <div className="col-12">
+                      <label htmlFor="envio-indicaciones" className="form-label marca-label">Indicaciones de Entrega (Opcional)</label>
+                      <input
+                        id="envio-indicaciones"
+                        type="text"
+                        className={claseCampo('indicaciones')}
                         placeholder="Ej: Dejar con conserje"
-                        value={formCliente.indicaciones}
-                        onChange={(e) => setFormCliente({ ...formCliente, indicaciones: e.target.value })}
+                        value={formEnvio.indicaciones}
+                        onChange={(e) => handleChange('indicaciones', e.target.value)}
+                        onBlur={() => handleBlur('indicaciones')}
                       />
+                      {errores.indicaciones && <div className="invalid-feedback">{errores.indicaciones}</div>}
                     </div>
                   </div>
 
-                  <h3 className="checkout-section-title marca-titulo marca-tam-6 mb-3">
-                    3. Método de Pago Simulado
-                  </h3>
+                  <fieldset className="mb-4">
+                    <legend className="checkout-section-title marca-titulo marca-tam-6 mb-3">3. Método de Pago Simulado</legend>
+                    {METODOS_PAGO.map((metodo) => (
+                      <div key={metodo.valor} className="form-check p-2 border rounded-1 mb-2 bg-light d-flex align-items-center">
+                        <input
+                          className="form-check-input ms-1 me-3"
+                          type="radio"
+                          name="metodoPago"
+                          id={`pago-${metodo.valor}`}
+                          value={metodo.valor}
+                          checked={formEnvio.metodoPago === metodo.valor}
+                          onChange={(e) => setFormEnvio((prev) => ({ ...prev, metodoPago: e.target.value }))}
+                        />
+                        <label className="form-check-label marca-strong marca-fino flex-grow-1" htmlFor={`pago-${metodo.valor}`}>
+                          {metodo.etiqueta}
+                        </label>
+                      </div>
+                    ))}
+                  </fieldset>
 
-                  <div className="mb-4">
-                    <div className="form-check p-2 border rounded-1 mb-2 bg-light">
-                      <input 
-                        className="form-check-input ms-1 me-2" 
-                        type="radio" 
-                        name="metodoPago" 
-                        id="webpay" 
-                        value="WebPay Plus (Débito)"
-                        checked={formCliente.metodoPago === 'WebPay Plus (Débito)'}
-                        onChange={(e) => setFormCliente({ ...formCliente, metodoPago: e.target.value })}
-                      />
-                      <label className="form-check-label marca-strong marca-fino" htmlFor="webpay">
-                        WebPay Plus / RedCompra (Débito)
-                      </label>
-                    </div>
+                  <div className="p-3 bg-platino border rounded-1 mb-4">{resumenCostos}</div>
 
-                    <div className="form-check p-2 border rounded-1 mb-2 bg-light">
-                      <input 
-                        className="form-check-input ms-1 me-2" 
-                        type="radio" 
-                        name="metodoPago" 
-                        id="credito" 
-                        value="Tarjeta de Crédito"
-                        checked={formCliente.metodoPago === 'Tarjeta de Crédito'}
-                        onChange={(e) => setFormCliente({ ...formCliente, metodoPago: e.target.value })}
-                      />
-                      <label className="form-check-label marca-strong marca-fino" htmlFor="credito">
-                        Tarjeta de Crédito (3 cuotas sin interés)
-                      </label>
-                    </div>
-
-                    <div className="form-check p-2 border rounded-1 bg-light">
-                      <input 
-                        className="form-check-input ms-1 me-2" 
-                        type="radio" 
-                        name="metodoPago" 
-                        id="transferencia" 
-                        value="Transferencia Bancaria"
-                        checked={formCliente.metodoPago === 'Transferencia Bancaria'}
-                        onChange={(e) => setFormCliente({ ...formCliente, metodoPago: e.target.value })}
-                      />
-                      <label className="form-check-label marca-strong marca-fino" htmlFor="transferencia">
-                        Transferencia Electrónica Directa
-                      </label>
-                    </div>
+                  <div className="d-flex justify-content-between">
+                    <button type="button" className="btn btn-outline-secondary btn-sm rounded-1" onClick={() => setPasoActual('carrito')}>
+                      ← Volver al Carrito
+                    </button>
+                    <button type="submit" className="btn btn-ambar btn-sm marca-strong rounded-1 px-4 py-2 shadow-sm" disabled={enviando || hayBloqueo}>
+                      {enviando ? 'Confirmando…' : 'Confirmar compra'}
+                    </button>
                   </div>
-
-                  {/* Resumen del cobro final */}
-                  <div className="p-3 bg-platino border rounded-1 mb-4">
-                    <div className="d-flex justify-content-between mb-1 marca-fino">
-                      <span>Total de productos:</span>
-                      <span className="marca-mono">{formatearCLP(totales.subtotal)}</span>
-                    </div>
-                    <div className="d-flex justify-content-between mb-2 marca-fino">
-                      <span>Costo de envío:</span>
-                      <span className="marca-mono marca-exito">
-                        {totales.despacho === 0 ? 'Gratis' : formatearCLP(totales.despacho)}
-                      </span>
-                    </div>
-                    <div className="d-flex justify-content-between align-items-center pt-2 border-top">
-                      <strong className="marca-bold marca-tam-5">Total a Pagar:</strong>
-                      <strong className="marca-total">{formatearCLP(totales.total)}</strong>
-                    </div>
-                  </div>
-
-                  <button 
-                    type="submit" 
-                    className="btn btn-ambar w-100 marca-bold py-3 rounded-1 shadow-sm marca-tam-5"
-                  >
-                    Confirmar y Pagar {formatearCLP(totales.total)}
-                  </button>
-
                 </form>
-                )}
 
               </div>
             </div>
@@ -790,96 +687,12 @@ function Carrito() {
         )}
 
         {/* ============================================================== */}
-        {/* PASO 3: COMPRA EXITOSA Y BOLETA (Rúbrica Duoc Figura 7)         */}
+        {/* PASO 3: COMPRA EXITOSA Y BOLETA (datos del servidor)           */}
         {/* ============================================================== */}
-        {pasoActual === 'exito' && ordenCreada && (
+        {paso === 'exito' && ordenCreada && (
           <div className="row justify-content-center">
             <div className="col-12 col-md-8 col-lg-7">
-              <div className="bg-white border rounded-1 shadow-sm p-4 p-md-5">
-                
-                <div className="marca-centro pb-4 border-bottom mb-4">
-                  <div className="d-inline-flex p-3 bg-success-subtle marca-exito rounded-circle mb-3">
-                    <i className="bi bi-check-lg carrito-check-icon"></i>
-                  </div>
-                  <h1 className="marca-titulo marca-tam-4 mb-1">
-                    ¡Se ha realizado la compra con éxito!
-                  </h1>
-                  <div className="d-flex justify-content-center gap-2 mt-2">
-                    <span className="marca-chip marca-chip--oscuro marca-mono px-3 py-2">
-                      Orden: #{ordenCreada.idOrden}
-                    </span>
-                    <span className="marca-chip marca-chip--gris marca-mono px-3 py-2">
-                      N° Boleta: {ordenCreada.numeroBoleta}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Datos del Cliente y Despacho */}
-                <div className="mb-4 marca-fino">
-                  <div className="row g-2">
-                    <div className="col-sm-6">
-                      <strong className="d-block marca-muted">Cliente:</strong>
-                      <span className="marca-strong">{ordenCreada.cliente.nombre}</span>
-                    </div>
-                    <div className="col-sm-6">
-                      <strong className="d-block marca-muted">RUT:</strong>
-                      <span className="marca-oscuro">{ordenCreada.cliente.rut}</span>
-                    </div>
-                    <div className="col-sm-6 mt-2">
-                      <strong className="d-block marca-muted">Correo:</strong>
-                      <span className="marca-oscuro">{ordenCreada.cliente.email}</span>
-                    </div>
-                    <div className="col-12 mt-2">
-                      <strong className="d-block marca-muted">Dirección de Entrega:</strong>
-                      <span className="marca-oscuro">{ordenCreada.cliente.direccion}</span>
-                    </div>
-                    <div className="col-sm-6 mt-2">
-                      <strong className="d-block marca-muted">Fecha de Pago:</strong>
-                      <span className="marca-oscuro">{ordenCreada.fecha}</span>
-                    </div>
-                    <div className="col-sm-6 mt-2">
-                      <strong className="d-block marca-muted">Método de Pago:</strong>
-                      <span className="marca-oscuro">{ordenCreada.metodoPago}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Tabla de ítems adquiridos */}
-                <div className="table-responsive border rounded-1 mb-4">
-                  <table className="table table-sm align-middle mb-0 marca-fino">
-                    <thead className="table-light">
-                      <tr>
-                        <th>Producto</th>
-                        <th className="marca-centro">Cant.</th>
-                        <th className="marca-derecha">Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ordenCreada.items.map((it, idx) => (
-                        <tr key={idx}>
-                          <td>{it.nombre}</td>
-                          <td className="marca-centro">{it.cantidad}</td>
-                          <td className="marca-derecha marca-mono">{formatearCLP(it.precioUnitario * it.cantidad)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Total */}
-                <div className="d-flex justify-content-between align-items-center p-3 bg-platino border rounded-1 mb-4">
-                  <span className="marca-bold marca-tam-5">Total Pagado:</span>
-                  <span className="marca-total marca-exito">{formatearCLP(ordenCreada.total)}</span>
-                </div>
-
-                {/* Acciones */}
-                <div className="d-flex flex-wrap gap-2 justify-content-center">
-                  <Link to="/catalogo" className="btn btn-ambar btn-sm marca-strong rounded-1 px-4">
-                    Volver al Catálogo
-                  </Link>
-                </div>
-
-              </div>
+              <Boleta orden={ordenCreada} cliente={sesion} />
             </div>
           </div>
         )}

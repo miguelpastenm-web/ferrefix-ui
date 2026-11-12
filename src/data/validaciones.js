@@ -141,6 +141,11 @@ export const validadores = {
     return '';
   },
 
+  indicaciones: (valor) => {
+    if (texto(valor).length > 500) return 'Las indicaciones no pueden superar los 500 caracteres.'; // mismo máximo que el backend
+    return '';
+  },
+
   detalle: (valor) => {
     const v = texto(valor);
     if (!v) return 'El detalle es obligatorio.';

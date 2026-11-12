@@ -26,6 +26,7 @@ import ofertaGuantesNitrilo from '../assets/sales/guantes-de-nitrilo-card.webp';
 import ofertaLentesProteccion from '../assets/sales/lentes-de-protecci-n-card.webp';
 import ofertaChalecoReflectante from '../assets/sales/chaleco-reflectante-card.webp';
 import ofertaCascoConstruccion from '../assets/sales/casco-de-construcci-n-est-ndar-card.webp';
+import { CATEGORIAS_PRODUCTOS } from './categorias';
 // Lista base de productos iniciales
 export const PRODUCTOS_INICIALES = [
   {
@@ -373,18 +374,7 @@ export const PRODUCTOS_INICIALES = [
   }
 ];
 
-export const CATEGORIAS_PRODUCTOS = [
-  'Todas',
-  'Construcción',
-  'Maderas',
-  'Herramientas',
-  'Fijaciones',
-  'Gasfitería',
-  'Electricidad',
-  'Pinturas',
-  'Cerámicas',
-  'Seguridad'
-];
+export { CATEGORIAS_PRODUCTOS };
 
 // SISTEMA DE PERSISTENCIA Y OPERACIONES CRUD (SIMULACIÓN DE BD)
 const STORAGE_KEY = 'ferrefix_productos_v1';
@@ -633,5 +623,3 @@ export const restablecerProductos = () => {
   return PRODUCTOS_INICIALES;
 };
 
-// Exportación compatible para componentes existentes
-export const PRODUCTOS = obtenerProductos();

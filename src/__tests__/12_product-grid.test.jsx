@@ -7,8 +7,8 @@ import { MemoryRouter } from 'react-router-dom';
 import ProductGrid from '../components/ProductGrid.jsx';
 
 const productosMock = [
-  { idProducto: '1', nombre: 'Taladro', marca: 'DeWalt', precioVenta: 100000, imagen: '/a.webp' },
-  { idProducto: '2', nombre: 'Sierra', marca: 'Makita', precioVenta: 150000, imagen: '/b.webp' }
+  { id: 1, nombre: 'Taladro', marca: 'DeWalt', precioVenta: 100000, imagen: '/a.webp' },
+  { id: 2, nombre: 'Sierra', marca: 'Makita', precioVenta: 150000, imagen: '/b.webp' }
 ];
 
 const renderizar = (productos, onResetFilters) =>
