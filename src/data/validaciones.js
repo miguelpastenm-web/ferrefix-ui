@@ -154,7 +154,7 @@ export const validadores = {
   password: (valor) => {
     const v = texto(valor);
     if (!v) return 'La contraseña es obligatoria.';
-    if (v.length < 6) return 'La contraseña debe tener al menos 6 caracteres.';
+    if (v.length < 8) return 'La contraseña debe tener al menos 8 caracteres.'; // mismo mínimo que el backend
     return '';
   }
 };

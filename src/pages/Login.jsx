@@ -1,30 +1,39 @@
 import { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { iniciarSesion, registrarUsuario } from '../data/auth';
-import { validadores, validarFormulario } from '../data/validaciones';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../context/authContexto';
+import { ApiError, erroresPorCampo } from '../api/errores';
+import { validadores, validarFormulario, formatearRut } from '../data/validaciones';
+import { rutaInternaSegura, rutaInicialPorRol } from '../utils/redireccion';
+import { mostrarToast } from '../components/ToastNotificacion';
+import { IndicadorCarga } from '../components/EsperarSesion';
+
+const CAMPOS_DEL_FORMULARIO = ['nombre', 'rut', 'email', 'password'];
 
 function Login() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const { autenticado, cargando, roles, login, registrar } = useAuth();
 
   // 'login' | 'registro' - derivado siempre de la ruta (/registro o /login)
   const modo = location.pathname === '/registro' ? 'registro' : 'login';
 
   // Estados de formulario
   const [nombre, setNombre] = useState('');
+  const [rut, setRut] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
-  const [exitoMsg, setExitoMsg] = useState('');
   const [errores, setErrores] = useState({});
   const [touched, setTouched] = useState({});
+  const [enviando, setEnviando] = useState(false);
 
   const reglasActuales = () =>
     modo === 'registro'
-      ? { nombre: validadores.nombre, email: validadores.email, password: validadores.password }
+      ? { nombre: validadores.nombre, rut: validadores.rut, email: validadores.email, password: validadores.password }
       : { email: validadores.email, password: validadores.requerido('La contraseña') };
 
-  const valores = { nombre, email, password };
+  const valores = { nombre, rut, email, password };
 
   const handleChange = (campo, valor, setter) => {
     setter(valor);
@@ -43,10 +52,38 @@ function Login() {
   const claseCampo = (campo) =>
     `form-control form-control-sm rounded-1${errores[campo] ? ' is-invalid' : ''}`;
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const limpiarMensajes = () => {
     setErrorMsg('');
-    setExitoMsg('');
+    setErrores({});
+    setTouched({});
+  };
+
+  // Traduce el rechazo del backend a mensajes junto a los campos y una alerta general.
+  const mostrarErrorDelServidor = (error) => {
+    if (!(error instanceof ApiError)) {
+      setErrorMsg('Ocurrió un error inesperado. Inténtalo nuevamente.');
+      return;
+    }
+    const delServidor = erroresPorCampo(error); // 400 con "details": {campo: mensaje}
+    const mapeados = {};
+    CAMPOS_DEL_FORMULARIO.forEach((campo) => {
+      if (delServidor[campo]) mapeados[campo] = delServidor[campo];
+    });
+    // Rechazos de negocio que vienen sin "details": se asocian al campo que corresponde.
+    if (modo === 'registro' && (error.status === 400 || error.status === 409) && /RUT/i.test(error.mensaje)) {
+      mapeados.rut = error.mensaje;
+    }
+    if (modo === 'registro' && error.status === 409 && /correo/i.test(error.mensaje)) {
+      mapeados.email = error.mensaje;
+    }
+    if (Object.keys(mapeados).length > 0) setErrores((prev) => ({ ...prev, ...mapeados }));
+    setErrorMsg(error.mensaje);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (enviando) return;
+    setErrorMsg('');
 
     const reglas = reglasActuales();
     const nuevosErrores = validarFormulario(reglas, valores);
@@ -54,36 +91,29 @@ function Login() {
     setTouched(Object.keys(reglas).reduce((acc, campo) => ({ ...acc, [campo]: true }), {}));
     if (Object.keys(nuevosErrores).length > 0) return;
 
-    if (modo === 'login') {
-      const res = iniciarSesion(email, password);
-      if (!res.ok) {
-        setErrorMsg(res.mensaje);
-        return;
+    setEnviando(true);
+    try {
+      if (modo === 'login') {
+        const usuario = await login({ email, password });
+        mostrarToast({ titulo: '¡Bienvenido/a de vuelta!', mensaje: `Hola, ${usuario.nombre}.`, tipo: 'success', duracion: 3500 });
+      } else {
+        const usuario = await registrar({ rut, nombre, email, password });
+        mostrarToast({ titulo: '¡Cuenta creada con éxito!', mensaje: `Bienvenido/a a Ferrefix, ${usuario.nombre}.`, tipo: 'success', duracion: 3500 });
       }
-
-      // El administrador entra directo al panel: su sesión no debe quedar
-      // visible en las páginas de la tienda.
-      if (res.usuario.rol === 'admin') {
-        navigate('/admin', { replace: true });
-        return;
-      }
-
-      setExitoMsg(`¡Bienvenido/a de vuelta, ${res.usuario.nombre}!`);
-      setTimeout(() => {
-        navigate('/catalogo');
-      }, 1200);
-    } else {
-      const res = registrarUsuario({ nombre, email, password });
-      if (!res.ok) {
-        setErrorMsg(res.mensaje);
-        return;
-      }
-      setExitoMsg(`¡Cuenta creada con éxito! Bienvenido/a a Ferrefix, ${res.usuario.nombre}.`);
-      setTimeout(() => {
-        navigate('/catalogo');
-      }, 1400);
+      // No se navega aquí: al quedar autenticado, el <Navigate> de más abajo lleva al destino.
+    } catch (error) {
+      mostrarErrorDelServidor(error);
+    } finally {
+      setEnviando(false);
     }
   };
+
+  if (cargando) return <IndicadorCarga etiqueta="Verificando tu sesión…" />;
+
+  // Con sesión iniciada no tiene sentido ver el formulario. `next` solo se respeta si es una ruta INTERNA.
+  if (autenticado) {
+    return <Navigate to={rutaInternaSegura(searchParams.get('next'), rutaInicialPorRol(roles))} replace />;
+  }
 
   return (
     <div className="login-page py-5 d-flex align-items-center">
@@ -99,31 +129,31 @@ function Login() {
                   {modo === 'login' ? 'Iniciar Sesión en Ferrefix' : 'Crear Cuenta de Cliente'}
                 </h1>
                 <p className="auth-sub mb-0">
-                  {modo === 'login' 
-                    ? 'Accede a tu cuenta para autocompletar tus compras y ver tus pedidos.' 
+                  {modo === 'login'
+                    ? 'Accede a tu cuenta para autocompletar tus compras y ver tus pedidos.'
                     : 'Regístrate para comprar herramientas con despacho prioritario.'}
                 </p>
               </div>
 
-              {/* Selector de modo */}
+              {/* Selector de modo (se conserva el parámetro "next") */}
               <div className="btn-group login-mode-group w-100 mb-4 rounded-1" role="group">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className={`btn login-mode-btn ${modo === 'login' ? 'active' : ''}`}
-                  onClick={() => { setErrorMsg(''); setExitoMsg(''); setErrores({}); setTouched({}); navigate('/login', { replace: true }); }}
+                  onClick={() => { limpiarMensajes(); navigate(`/login${location.search}`, { replace: true }); }}
                 >
                   Ya tengo cuenta
                 </button>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className={`btn login-mode-btn ${modo === 'registro' ? 'active' : ''}`}
-                  onClick={() => { setErrorMsg(''); setExitoMsg(''); setErrores({}); setTouched({}); navigate('/registro', { replace: true }); }}
+                  onClick={() => { limpiarMensajes(); navigate(`/registro${location.search}`, { replace: true }); }}
                 >
                   Soy nuevo cliente
                 </button>
               </div>
 
-              {/* Mensajes de feedback */}
+              {/* Mensaje general */}
               {errorMsg && (
                 <div className="alert alert-danger auth-alert py-2 px-3 rounded-1 mb-3" role="alert">
                   <i className="bi bi-exclamation-triangle-fill me-1"></i>
@@ -131,35 +161,55 @@ function Login() {
                 </div>
               )}
 
-              {exitoMsg && (
-                <div className="alert alert-success auth-alert py-2 px-3 rounded-1 mb-3" role="alert">
-                  <i className="bi bi-check-circle-fill me-1"></i>
-                  {exitoMsg}
-                </div>
-              )}
-
               {/* Formulario */}
               <form onSubmit={handleSubmit} noValidate>
                 {modo === 'registro' && (
-                  <div className="mb-3">
-                    <label className="form-label auth-label mb-1">Nombre Completo *</label>
-                    <input 
-                      type="text" 
-                      className={claseCampo('nombre')}
-                      placeholder="Ej: Juan Pérez"
-                      value={nombre}
-                      onChange={(e) => handleChange('nombre', e.target.value, setNombre)}
-                      onBlur={() => handleBlur('nombre')}
-                      required
-                    />
-                    {errores.nombre && <div className="invalid-feedback">{errores.nombre}</div>}
-                  </div>
+                  <>
+                    <div className="mb-3">
+                      <label htmlFor="auth-nombre" className="form-label auth-label mb-1">Nombre Completo *</label>
+                      <input
+                        id="auth-nombre"
+                        name="nombre"
+                        type="text"
+                        autoComplete="name"
+                        className={claseCampo('nombre')}
+                        placeholder="Ej: Juan Pérez"
+                        value={nombre}
+                        onChange={(e) => handleChange('nombre', e.target.value, setNombre)}
+                        onBlur={() => handleBlur('nombre')}
+                        required
+                      />
+                      {errores.nombre && <div className="invalid-feedback">{errores.nombre}</div>}
+                    </div>
+
+                    <div className="mb-3">
+                      <label htmlFor="auth-rut" className="form-label auth-label mb-1">RUN / RUT *</label>
+                      <input
+                        id="auth-rut"
+                        name="rut"
+                        type="text"
+                        inputMode="text"
+                        autoComplete="off"
+                        className={`${claseCampo('rut')} font-monospace`}
+                        placeholder="Ej: 12.345.678-5"
+                        maxLength={12}
+                        value={rut}
+                        onChange={(e) => handleChange('rut', formatearRut(e.target.value), setRut)}
+                        onBlur={() => handleBlur('rut')}
+                        required
+                      />
+                      {errores.rut && <div className="invalid-feedback">{errores.rut}</div>}
+                    </div>
+                  </>
                 )}
 
                 <div className="mb-3">
-                  <label className="form-label auth-label mb-1">Correo Electrónico *</label>
-                  <input 
-                    type="email" 
+                  <label htmlFor="auth-email" className="form-label auth-label mb-1">Correo Electrónico *</label>
+                  <input
+                    id="auth-email"
+                    name="email"
+                    type="email"
+                    autoComplete={modo === 'login' ? 'username' : 'email'}
                     className={claseCampo('email')}
                     placeholder="nombre@ejemplo.cl"
                     value={email}
@@ -171,9 +221,12 @@ function Login() {
                 </div>
 
                 <div className="mb-4">
-                  <label className="form-label auth-label mb-1">Contraseña *</label>
-                  <input 
-                    type="password" 
+                  <label htmlFor="auth-password" className="form-label auth-label mb-1">Contraseña *</label>
+                  <input
+                    id="auth-password"
+                    name="password"
+                    type="password"
+                    autoComplete={modo === 'login' ? 'current-password' : 'new-password'}
                     className={claseCampo('password')}
                     placeholder="••••••••"
                     value={password}
@@ -181,14 +234,16 @@ function Login() {
                     onBlur={() => handleBlur('password')}
                     required
                   />
+                  {modo === 'registro' && !errores.password && <div className="form-text">Mínimo 8 caracteres.</div>}
                   {errores.password && <div className="invalid-feedback">{errores.password}</div>}
                 </div>
 
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   className="btn btn-ambar auth-submit w-100 py-2 rounded-1 shadow-sm mb-3"
+                  disabled={enviando}
                 >
-                  {modo === 'login' ? 'Entrar a mi Cuenta' : 'Registrarme e Iniciar Sesión'}
+                  {enviando ? 'Enviando…' : modo === 'login' ? 'Entrar a mi Cuenta' : 'Registrarme e Iniciar Sesión'}
                 </button>
               </form>
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   obtenerProductos,
   crearProducto,
@@ -10,12 +10,7 @@ import {
   EVENTO_PRODUCTOS_ACTUALIZADOS
 } from '../data/productos';
 import { obtenerOrdenes, EVENTO_ORDENES_ACTUALIZADAS } from '../data/ordenes';
-import {
-  obtenerSesionActiva,
-  iniciarSesion,
-  cerrarSesion,
-  EVENTO_SESION_ACTUALIZADA
-} from '../data/auth';
+import { useAuth } from '../context/authContexto';
 import ImagenProductoUploader from '../components/ImagenProductoUploader';
 import GeneradorProductos from '../components/GeneradorProductos';
 
@@ -31,11 +26,9 @@ const FORM_INICIAL = {
 };
 
 function Admin() {
-  // Autenticación
-  const [sesion, setSesion] = useState(obtenerSesionActiva);
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [errorLogin, setErrorLogin] = useState('');
+  // Sesión: el acceso al panel lo controla <RutaProtegida roles={['ADMIN']}> en App.jsx (ya no hay login interno).
+  const { usuario, logout } = useAuth();
+  const navigate = useNavigate();
 
   // Datos
   const [productos, setProductos] = useState(obtenerProductos);
@@ -61,16 +54,13 @@ function Admin() {
   useEffect(() => {
     const handleProductos = () => setProductos(obtenerProductos());
     const handleOrdenes = () => setOrdenes(obtenerOrdenes());
-    const handleSesion = () => setSesion(obtenerSesionActiva());
 
     window.addEventListener(EVENTO_PRODUCTOS_ACTUALIZADOS, handleProductos);
     window.addEventListener(EVENTO_ORDENES_ACTUALIZADAS, handleOrdenes);
-    window.addEventListener(EVENTO_SESION_ACTUALIZADA, handleSesion);
 
     return () => {
       window.removeEventListener(EVENTO_PRODUCTOS_ACTUALIZADOS, handleProductos);
       window.removeEventListener(EVENTO_ORDENES_ACTUALIZADAS, handleOrdenes);
-      window.removeEventListener(EVENTO_SESION_ACTUALIZADA, handleSesion);
     };
   }, []);
 
@@ -217,101 +207,10 @@ function Admin() {
     }).format(valor);
   };
 
-  const handleLoginSubmit = (e) => {
-    e.preventDefault();
-    setErrorLogin('');
-    const res = iniciarSesion(loginEmail, loginPassword);
-    if (!res.ok) {
-      setErrorLogin(res.mensaje);
-      return;
-    }
-    if (res.usuario.rol !== 'admin') {
-      // No dejar activa una sesión de cliente creada desde el login del panel.
-      cerrarSesion();
-      setSesion(null);
-      setErrorLogin('Acceso denegado: Esta cuenta no tiene permisos de administrador.');
-      return;
-    }
-    setSesion(res.usuario);
-  };
-
   const handleCerrarSesion = () => {
-    cerrarSesion();
-    setSesion(null);
+    logout();
+    navigate('/', { replace: true });
   };
-
-  // Pantalla Admin
-  if (!sesion || sesion.rol !== 'admin') {
-    return (
-      <div className="admin-wrapper py-5 d-flex align-items-center">
-        <div className="container">
-          <div className="row justify-content-center">
-            <div className="col-12 col-sm-9 col-md-6 col-lg-4">
-              <div className="auth-card shadow-sm p-4">
-
-                <div className="auth-head border-bottom pb-3 mb-3">
-                  <div className="mb-2">
-                    <img 
-                      src="/banner-web.webp" 
-                      alt="Ferrefix" 
-                      className="admin-login-banner"
-                    />
-                  </div>
-                  <h1 className="auth-title mb-0">Iniciar Sesión Administrador</h1>
-                </div>
-
-                {errorLogin && (
-                  <div className="alert alert-danger auth-alert py-2 px-3 rounded-1 mb-3" role="alert">
-                    {errorLogin}
-                  </div>
-                )}
-
-                <form onSubmit={handleLoginSubmit}>
-                  <div className="mb-3">
-                    <label className="form-label admin-label mb-1">Correo Electrónico</label>
-                    <input 
-                      type="email" 
-                      className="form-control form-control-sm rounded-1"
-                      placeholder="admin@ferrefix.cl"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <div className="mb-3">
-                    <label className="form-label admin-label mb-1">Contraseña</label>
-                    <input 
-                      type="password" 
-                      className="form-control form-control-sm rounded-1"
-                      placeholder="••••••••"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <button 
-                    type="submit" 
-                    className="btn btn-ambar auth-submit btn-sm w-100 rounded-1 py-2 mb-3"
-                  >
-                    Ingresar al Panel
-                  </button>
-                </form>
-
-                <div className="auth-foot pt-2 border-top">
-                  <Link to="/" className="auth-back-link">
-                    ← Volver a la Tienda
-                  </Link>
-                </div>
-
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   // PANEL ADMINISTRATIVO PRINCIPAL
   return (
@@ -369,7 +268,7 @@ function Admin() {
             <div className="vr admin-vr mx-1 d-none d-md-block"></div>
 
             <span className="admin-user-email d-none d-md-inline">
-              {sesion.email}
+              {usuario.email}
             </span>
 
             <button 

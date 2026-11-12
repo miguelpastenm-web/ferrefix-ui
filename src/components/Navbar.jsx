@@ -1,14 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { obtenerTotalesCarrito, EVENTO_CARRITO_ACTUALIZADO } from '../data/carrito';
-import { obtenerSesionActiva, cerrarSesion, EVENTO_SESION_ACTUALIZADA } from '../data/auth';
-
-// El navbar solo se renderiza en las páginas de la tienda, así que una sesión
-// de administrador nunca debe reflejarse aquí. El panel se usa en /admin.
-const obtenerSesionCliente = () => {
-  const sesion = obtenerSesionActiva();
-  return sesion?.rol === 'admin' ? null : sesion;
-};
+import { useAuth } from '../context/authContexto';
 
 function Navbar() {
   // Desplegable móvil (Hamburguesa)
@@ -19,20 +12,18 @@ function Navbar() {
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const toggleAccount = () => setIsAccountOpen(!isAccountOpen);
 
-  // Estados reactivos: Carrito y Sesión de Usuario
+  // Carrito (local) y sesión (AuthContext: usuario del backend, con sus roles)
   const [totalesCarrito, setTotalesCarrito] = useState(obtenerTotalesCarrito);
-  const [sesion, setSesion] = useState(obtenerSesionCliente);
+  const { usuario: sesion, esAdmin, cargando, logout } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handleCarrito = () => setTotalesCarrito(obtenerTotalesCarrito());
-    const handleSesion = () => setSesion(obtenerSesionCliente());
 
     window.addEventListener(EVENTO_CARRITO_ACTUALIZADO, handleCarrito);
-    window.addEventListener(EVENTO_SESION_ACTUALIZADA, handleSesion);
 
     return () => {
       window.removeEventListener(EVENTO_CARRITO_ACTUALIZADO, handleCarrito);
-      window.removeEventListener(EVENTO_SESION_ACTUALIZADA, handleSesion);
     };
   }, []);
 
@@ -42,8 +33,9 @@ function Navbar() {
   };
 
   const handleLogout = () => {
-    cerrarSesion();
+    logout();
     closeMenu();
+    navigate('/');
   };
 
   // Obtener inicial para el avatar circular
@@ -66,20 +58,22 @@ function Navbar() {
 
         {/* Acciones en móvil: Carrito visible (solo icono) + Botón hamburguesa */}
         <div className="d-flex align-items-center gap-2 d-lg-none">
-          <Link 
-            to="/carrito" 
-            className="navbar-cart-link d-flex align-items-center justify-content-center p-2 me-1"
-            title="Ver mi carrito de compras"
-          >
-            <div className="position-relative d-inline-flex align-items-center">
-              <i className="bi bi-cart3 navbar-cart-icon"></i>
-              {totalesCarrito.totalArticulos > 0 && (
-                <span className="navbar-cart-badge">
-                  {totalesCarrito.totalArticulos}
-                </span>
-              )}
-            </div>
-          </Link>
+          {!esAdmin && (
+            <Link 
+              to="/carrito" 
+              className="navbar-cart-link d-flex align-items-center justify-content-center p-2 me-1"
+              title="Ver mi carrito de compras"
+            >
+              <div className="position-relative d-inline-flex align-items-center">
+                <i className="bi bi-cart3 navbar-cart-icon"></i>
+                {totalesCarrito.totalArticulos > 0 && (
+                  <span className="navbar-cart-badge">
+                    {totalesCarrito.totalArticulos}
+                  </span>
+                )}
+              </div>
+            </Link>
+          )}
           <button
             className="navbar-toggler border-0 shadow-none p-1"
             type="button"
@@ -120,30 +114,38 @@ function Navbar() {
           {/* Bloque de Acciones: Carrito de Compras + Usuario */}
           <div className="d-flex align-items-center justify-content-center gap-3">
             
-            {/* Carrito en Desktop (solo icono, sin texto) */}
-            <Link 
-              to="/carrito" 
-              className="navbar-cart-link d-none d-lg-flex align-items-center justify-content-center p-2 me-2"
-              onClick={closeMenu}
-              title="Ver mi carrito de compras"
-            >
-              <div className="position-relative d-inline-flex align-items-center">
-                <i className="bi bi-cart3 navbar-cart-icon-lg"></i>
-                {totalesCarrito.totalArticulos > 0 ? (
-                  <span className="navbar-cart-badge">
-                    {totalesCarrito.totalArticulos}
-                  </span>
-                ) : (
-                  <span className="navbar-cart-badge navbar-cart-badge--empty">
-                    0
-                  </span>
-                )}
-              </div>
-            </Link>
+            {/* Carrito en Desktop (solo icono, sin texto). El ADMIN no compra: no se le muestra. */}
+            {!esAdmin && (
+              <Link 
+                to="/carrito" 
+                className="navbar-cart-link d-none d-lg-flex align-items-center justify-content-center p-2 me-2"
+                onClick={closeMenu}
+                title="Ver mi carrito de compras"
+              >
+                <div className="position-relative d-inline-flex align-items-center">
+                  <i className="bi bi-cart3 navbar-cart-icon-lg"></i>
+                  {totalesCarrito.totalArticulos > 0 ? (
+                    <span className="navbar-cart-badge">
+                      {totalesCarrito.totalArticulos}
+                    </span>
+                  ) : (
+                    <span className="navbar-cart-badge navbar-cart-badge--empty">
+                      0
+                    </span>
+                  )}
+                </div>
+              </Link>
+            )}
 
             {/* Panel de Usuario / Sesión con Avatar Circular */}
             <div className="dropdown position-relative">
-              {sesion ? (
+              {cargando ? (
+                <span
+                  className="spinner-border spinner-border-sm text-secondary"
+                  role="status"
+                  aria-label="Verificando sesión"
+                ></span>
+              ) : sesion ? (
                 // Usuario CON sesión iniciada: Avatar circular destacado
                 <button
                   className="btn navbar-account-btn d-flex align-items-center gap-2 rounded-pill py-1 px-2 shadow-sm"
@@ -183,18 +185,29 @@ function Navbar() {
                       <div className="navbar-user-fullname">{sesion.nombre}</div>
                       <div className="navbar-user-email">{sesion.email}</div>
                     </li>
-                    <li>
-                      <Link className="dropdown-item py-2" to="/cuenta" onClick={closeMenu}>
-                        <i className="bi bi-person-gear me-2 text-warning"></i>
-                        Mi Cuenta
-                      </Link>
-                    </li>
-                    <li>
-                      <Link className="dropdown-item py-2" to="/carrito" onClick={closeMenu}>
-                        <i className="bi bi-cart me-2"></i>
-                        Mi Carrito ({totalesCarrito.totalArticulos})
-                      </Link>
-                    </li>
+                    {esAdmin ? (
+                      <li>
+                        <Link className="dropdown-item py-2" to="/admin" onClick={closeMenu}>
+                          <i className="bi bi-speedometer2 me-2 text-warning"></i>
+                          Panel de administración
+                        </Link>
+                      </li>
+                    ) : (
+                      <>
+                        <li>
+                          <Link className="dropdown-item py-2" to="/cuenta" onClick={closeMenu}>
+                            <i className="bi bi-person-gear me-2 text-warning"></i>
+                            Mi Cuenta
+                          </Link>
+                        </li>
+                        <li>
+                          <Link className="dropdown-item py-2" to="/carrito" onClick={closeMenu}>
+                            <i className="bi bi-cart me-2"></i>
+                            Mi Carrito ({totalesCarrito.totalArticulos})
+                          </Link>
+                        </li>
+                      </>
+                    )}
                     <li><hr className="dropdown-divider my-1" /></li>
                     <li>
                       <button className="dropdown-item py-2 navbar-item-danger d-flex align-items-center" onClick={handleLogout}>
@@ -203,7 +216,7 @@ function Navbar() {
                       </button>
                     </li>
                   </>
-                ) : (
+                ) : cargando ? null : (
                   <>
                     <li>
                       <Link className="dropdown-item py-2" to="/login" onClick={closeMenu}>
