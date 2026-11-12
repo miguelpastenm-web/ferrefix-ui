@@ -26,7 +26,7 @@ function ProductGrid({ productos = [], onResetFilters }) {
   return (
     <div className="row g-2 row-cols-2 row-cols-md-3 row-cols-lg-4 product-grid-container">
       {productos.map((producto) => (
-        <div key={producto.idProducto} className="col d-flex">
+        <div key={producto.id} className="col d-flex">
           <ProductCard producto={producto} />
         </div>
       ))}

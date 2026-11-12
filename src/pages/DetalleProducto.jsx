@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { obtenerProductos, EVENTO_PRODUCTOS_ACTUALIZADOS } from '../data/productos';
+import { obtenerProducto } from '../api/productos';
+import { ApiError } from '../api/errores';
+import { useCarga } from '../hooks/useCarga';
 import { agregarAlCarrito } from '../data/carrito';
 import { mostrarToast } from '../components/ToastNotificacion';
+import { IndicadorCarga } from '../components/EsperarSesion';
+import ErrorCarga from '../components/ErrorCarga';
 
 function DetalleProducto() {
   const { id } = useParams();
@@ -11,31 +15,37 @@ function DetalleProducto() {
   const [cantidad, setCantidad] = useState(1);
   const [botonAnimado, setBotonAnimado] = useState(false);
 
-  // Catálogo reactivo leído desde localStorage
-  const [productos, setProductos] = useState(obtenerProductos);
-
-  // Producto derivado del catálogo según el id de la ruta
-  const producto = productos.find((p) => String(p.idProducto) === String(id)) || null;
-
-  // Escuchar si el producto fue modificado (ej. stock actualizado o precio)
-  useEffect(() => {
-    const handleActualizacion = () => {
-      setProductos(obtenerProductos());
-    };
-
-    window.addEventListener(EVENTO_PRODUCTOS_ACTUALIZADOS, handleActualizacion);
-    return () => {
-      window.removeEventListener(EVENTO_PRODUCTOS_ACTUALIZADOS, handleActualizacion);
-    };
-  }, []);
+  // El detalle se pide por id numérico. Un id que no es un número no existe en el backend (daría 400): ni se consulta.
+  const idValido = /^\d+$/.test(id ?? '');
+  const { datos: producto, cargando, error, recargar } = useCarga(
+    () => (idValido ? obtenerProducto(id) : Promise.resolve(null)),
+    id
+  );
+  const noEncontrado = !cargando && (!idValido || (error instanceof ApiError && error.status === 404));
 
   // Scroll automático hacia arriba al cargar la página
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
 
+  if (cargando) {
+    return (
+      <div className="container py-5">
+        <IndicadorCarga etiqueta="Cargando producto…" />
+      </div>
+    );
+  }
+
+  if (error && !noEncontrado) {
+    return (
+      <div className="container py-5">
+        <ErrorCarga error={error} onReintentar={recargar} titulo="No pudimos cargar el producto" />
+      </div>
+    );
+  }
+
   // Si no se encuentra el producto
-  if (!producto) {
+  if (noEncontrado || !producto) {
     return (
       <div className="container py-5 marca-centro my-5">
         <div className="detalle-no-encontrado-card bg-platino p-5 rounded-4 shadow-sm mx-auto">
@@ -52,6 +62,8 @@ function DetalleProducto() {
       </div>
     );
   }
+
+  const agotado = producto.estado === 'AGOTADO' || producto.stock <= 0;
 
   // Formatear precio a CLP
   const precioFormateado = new Intl.NumberFormat('es-CL', {
@@ -176,7 +188,8 @@ function DetalleProducto() {
                 <span className="marca-chip marca-chip--ambar">
                   {producto.marca}
                 </span>
-                <span className="marca-nota">Código Ref: #{producto.idProducto}</span>
+                <span className="marca-nota">Código Ref: #{producto.sku}</span>
+                {agotado && <span className="badge bg-secondary">Agotado</span>}
               </div>
 
               {/* Título */}
@@ -222,7 +235,7 @@ function DetalleProducto() {
                       className="btn btn-outline-secondary px-3" 
                       type="button"
                       onClick={handleRestar}
-                      disabled={cantidad <= 1}
+                      disabled={agotado || cantidad <= 1}
                       aria-label="Restar una unidad"
                     >
                       <i className="bi bi-dash"></i>
@@ -237,14 +250,14 @@ function DetalleProducto() {
                       className="btn btn-outline-secondary px-3" 
                       type="button"
                       onClick={handleSumar}
-                      disabled={cantidad >= producto.stock}
+                      disabled={agotado || cantidad >= producto.stock}
                       aria-label="Sumar una unidad"
                     >
                       <i className="bi bi-plus"></i>
                     </button>
                   </div>
                   <span className="marca-nota">
-                    Máximo: {producto.stock} unidades
+                    {agotado ? 'Sin stock disponible' : `Máximo: ${producto.stock} unidades`}
                   </span>
                 </div>
               </div>
@@ -254,14 +267,14 @@ function DetalleProducto() {
                 <button
                   type="button"
                   onClick={handleAgregarCarrito}
-                  disabled={producto.stock <= 0}
+                  disabled={agotado}
                   className={`btn btn-lg py-3 rounded-2 shadow-sm d-flex align-items-center justify-content-center gap-2 transition-all ${
                     botonAnimado ? "btn-success text-white" : "btn-ambar"
                   }`}
                   style={{ transition: "all 0.25s ease" }}
                 >
                   <i className={`bi ${botonAnimado ? "bi-check2-circle" : "bi-cart-plus-fill"} marca-icono`}></i>
-                  {producto.stock <= 0 
+                  {agotado
                     ? "Agotado Temporalmente" 
                     : botonAnimado 
                     ? "¡Añadido con éxito! ✓" 

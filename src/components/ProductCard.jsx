@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 function ProductCard({ producto }) {
   if (!producto) return null;
 
-  const { idProducto, nombre, marca, precioVenta, imagen } = producto;
+  const { id, nombre, marca, precioVenta, imagen } = producto;
+  const agotado = producto.estado === 'AGOTADO' || (typeof producto.stock === 'number' && producto.stock <= 0);
 
   // Formatear el precio a pesos chilenos (CLP)
   const precioFormateado = new Intl.NumberFormat('es-CL', {
@@ -14,10 +15,13 @@ function ProductCard({ producto }) {
 
   return (
     <div className="product-card">
-      <Link to={`/producto/${idProducto}`} className='product-card-link'>
+      <Link to={`/producto/${id}`} className='product-card-link'>
 
         {/* Contenedor de la foto */}
-        <div className="product-card-img-wrapper">
+        <div className="product-card-img-wrapper position-relative">
+          {agotado && (
+            <span className="badge bg-secondary position-absolute top-0 start-0 m-2">Agotado</span>
+          )}
           <img 
             src={imagen || '/banner-web.webp'} 
             alt={nombre} 

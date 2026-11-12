@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/authContexto";
 import { actualizarPerfil } from "../api/usuarios";
 import { ApiError, erroresPorCampo } from "../api/errores";
-import { obtenerOrdenes, EVENTO_ORDENES_ACTUALIZADAS } from "../data/ordenes";
+import HistorialCompras from "../components/HistorialCompras";
 import { obtenerContratosArriendo, EVENTO_MAQUINARIAS_ACTUALIZADAS } from "../data/maquinarias";
 import { REGIONES_CHILE, normalizarRegion, obtenerComunas } from "../data/chile";
 import { validadores, formatearTelefono } from "../data/validaciones";
@@ -15,7 +15,6 @@ export default function CuentaCliente() {
   const [tabActiva, setTabActiva] = useState(tabInicial);
 
   const { usuario: sesion, actualizarUsuario } = useAuth();
-  const [ordenes, setOrdenes] = useState([]);
   const [arriendos, setArriendos] = useState([]);
 
   // Formulario de edición de datos
@@ -49,16 +48,6 @@ export default function CuentaCliente() {
   useEffect(() => {
     if (!sesion) return;
 
-    const cargarCompras = () => {
-      const todas = obtenerOrdenes();
-      const mias = todas.filter(
-        (o) =>
-          (o.cliente && o.cliente.email && o.cliente.email.toLowerCase() === sesion.email.toLowerCase()) ||
-          o.idUsuario === sesion.id
-      );
-      setOrdenes(mias);
-    };
-
     const cargarArriendos = () => {
       const todos = obtenerContratosArriendo();
       const mios = todos.filter(
@@ -70,14 +59,11 @@ export default function CuentaCliente() {
       setArriendos(mios);
     };
 
-    cargarCompras();
     cargarArriendos();
 
-    window.addEventListener(EVENTO_ORDENES_ACTUALIZADAS, cargarCompras);
     window.addEventListener(EVENTO_MAQUINARIAS_ACTUALIZADAS, cargarArriendos);
 
     return () => {
-      window.removeEventListener(EVENTO_ORDENES_ACTUALIZADAS, cargarCompras);
       window.removeEventListener(EVENTO_MAQUINARIAS_ACTUALIZADAS, cargarArriendos);
     };
   }, [sesion]);
@@ -197,7 +183,7 @@ export default function CuentaCliente() {
             onClick={() => cambiarTab("compras")}
           >
             <i className="bi bi-bag-check me-2"></i>
-            Historial de Compras ({ordenes.length})
+            Mis compras
           </button>
           <button
             type="button"
@@ -396,87 +382,7 @@ export default function CuentaCliente() {
         {/* ============================================================== */}
         {/* TAB 2: HISTORIAL DE COMPRAS                                    */}
         {/* ============================================================== */}
-        {tabActiva === "compras" && (
-          <div className="info-card shadow-sm p-4 p-md-5">
-            <div className="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom flex-wrap gap-2">
-              <div>
-                <h2 className="info-section-title mb-1">Historial de Compras Realizadas</h2>
-                <span className="text-muted small">Registro oficial de tus pedidos procesados con boleta y despacho</span>
-              </div>
-              <span className="badge bg-dark px-3 py-2 font-monospace">Total Compras: {ordenes.length}</span>
-            </div>
-
-            {ordenes.length === 0 ? (
-              <div className="text-center py-5">
-                <i className="bi bi-cart-x text-muted display-4 mb-3 d-block"></i>
-                <h3 className="h5 text-dark mb-2">Aún no registras compras con tu cuenta</h3>
-                <p className="text-secondary small mb-4">
-                  Explora nuestro catálogo con herramientas y materiales profesionales para comenzar tu primer pedido.
-                </p>
-                <Link to="/catalogo" className="btn btn-ambar px-4 py-2 rounded-1 fw-bold">
-                  Explorar Catálogo
-                </Link>
-              </div>
-            ) : (
-              <div className="d-flex flex-column gap-3">
-                {ordenes.map((ord) => (
-                  <div key={ord.idOrden} className="border rounded-1 p-3 p-md-4 bg-white shadow-sm">
-                    <div className="d-flex flex-wrap justify-content-between align-items-center pb-2 mb-3 border-bottom gap-2">
-                      <div>
-                        <span className="badge bg-success-subtle text-success border border-success-subtle me-2">
-                          ● {ord.estado || "Completada"}
-                        </span>
-                        <strong className="text-dark me-2">Orden #{ord.idOrden}</strong>
-                        {ord.numeroBoleta && (
-                          <span className="badge bg-secondary-subtle text-secondary font-monospace">
-                            Boleta: {ord.numeroBoleta}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-muted small">
-                        <i className="bi bi-calendar3 me-1"></i> {ord.fecha}
-                      </div>
-                    </div>
-
-                    <div className="table-responsive mb-3">
-                      <table className="table table-sm align-middle mb-0">
-                        <thead className="table-light small">
-                          <tr>
-                            <th>Producto</th>
-                            <th className="text-center">Cant.</th>
-                            <th className="text-end">P. Unitario</th>
-                            <th className="text-end">Subtotal</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {ord.items && ord.items.map((item, idx) => (
-                            <tr key={idx} className="small">
-                              <td className="fw-semibold text-dark">{item.nombre}</td>
-                              <td className="text-center">{item.cantidad}</td>
-                              <td className="text-end font-monospace">{formatearCLP(item.precioUnitario)}</td>
-                              <td className="text-end font-monospace">{formatearCLP(item.precioUnitario * item.cantidad)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="d-flex flex-wrap justify-content-between align-items-center pt-2 border-top bg-light p-2 rounded-1">
-                      <div className="small text-muted">
-                        <div><strong>Medio de Pago:</strong> {ord.metodoPago || "WebPay Plus"}</div>
-                        <div><strong>Dirección de Entrega:</strong> {ord.cliente?.direccion || "Despacho registrado"}</div>
-                      </div>
-                      <div className="text-end">
-                        <span className="text-muted small d-block">Monto Total Pagado:</span>
-                        <strong className="text-success fs-5 font-monospace">{formatearCLP(ord.total)}</strong>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {tabActiva === "compras" && <HistorialCompras />}
 
         {/* ============================================================== */}
         {/* TAB 3: MIS ARRIENDOS DE MAQUINARIA                             */}

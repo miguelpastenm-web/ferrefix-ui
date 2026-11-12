@@ -57,7 +57,7 @@ describe('AuthContext', () => {
     const [l] = llamadasDe(falso);
     expect(l.ruta).toBe('/api/v1/auth/me');
     expect(l.authorization).toBe('Bearer tok');
-    expect(auth.esCliente).toBe(true);
+    await waitFor(() => expect(auth.esCliente).toBe(true)); // `auth` se asigna en un efecto, un instante después del render
     expect(auth.esAdmin).toBe(false);
     expect(auth.tieneRol('ADMIN', 'CLIENTE')).toBe(true);
   });

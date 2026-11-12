@@ -23,12 +23,15 @@ export default defineConfig(({ command, mode }) => {
     test: {
       environment: "jsdom",
       globals: true,
+      // Holgura para equipos lentos o con varias suites en paralelo (los formularios con ~350 comunas pesan en jsdom)
+      testTimeout: 15000,
       coverage: {
         provider: "v8",
         reporter: ["text", "html", "json-summary"],
         include: [
           "src/api/**",
           "src/context/**",
+          "src/hooks/**",
           "src/utils/**",
           "src/data/**",
           "src/components/**",

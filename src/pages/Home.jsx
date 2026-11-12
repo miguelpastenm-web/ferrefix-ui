@@ -7,7 +7,9 @@ import {
   ENLACE_POR_DEFECTO,
   obtenerOfertasGeneradas
 } from '../data/generadores';
-import { obtenerProductoPorId } from '../data/productos';
+import { listarProductos } from '../api/productos';
+import { useCarga } from '../hooks/useCarga';
+import { ofertasDeCategoria } from '../utils/ofertas';
 
 import dewaltImg from '../assets/banners/dewalt.webp';
 import makitaImg from '../assets/banners/makita.webp';
@@ -24,34 +26,6 @@ import electricidadImg from '../assets/categories/electricidad.webp';
 import pinturasImg from '../assets/categories/pinturas.webp';
 import ceramicasImg from '../assets/categories/ceramicas.webp';
 import seguridadImg from '../assets/categories/seguridad.webp';
-
-// Listas de ofertas destacadas del home.
-// Se construyen desde los productos reales de productos.js: el enlace
-// (`/producto/<id>`) sale del catálogo y la imagen es la tarjeta diseñada
-// (`imagenOferta`); si el producto no tiene tarjeta, se usa su foto.
-const crearOfertasDesdeProductos = (idsProductos) =>
-  idsProductos
-    .map((idProducto) => obtenerProductoPorId(idProducto))
-    .filter(Boolean)
-    .map((producto) => ({
-      img: producto.imagenOferta || producto.imagen,
-      link: `/producto/${producto.idProducto}`,
-      alt: producto.nombre
-    }));
-
-const OFERTAS_SEGURIDAD_INICIO = crearOfertasDesdeProductos([
-  '5422223228', // Guantes de nitrilo
-  '5422223229', // Lentes de protección
-  '5422223230', // Chaleco reflectante
-  '5422223231'  // Casco de construcción
-]);
-
-const OFERTAS_MADERAS_INICIO = crearOfertasDesdeProductos([
-  '5422223224', // Cubierta Melamina Café
-  '5422223225', // Tablero OSB Multiplac
-  '5422223226', // Terciado Ranurado
-  '5422223227'  // Terciado Estructural
-]);
 
 const IMAGENES_BANNER = [
   {
@@ -87,6 +61,12 @@ function Home() {
   const [slideActivo, setSlideActivo] = useState(0);
   const [ofertasGeneradas, setOfertasGeneradas] = useState(obtenerOfertasGeneradas);
 
+  // Ofertas destacadas: los productos REALES del catálogo que traen imagen de oferta, por categoría. Si la API falla
+  // o no hay ninguno, la sección simplemente no se muestra (el resto del inicio no depende de esto).
+  const { datos: productos } = useCarga(listarProductos, 'inicio');
+  const ofertasSeguridad = ofertasDeCategoria(productos, 'Seguridad');
+  const ofertasMaderasBase = ofertasDeCategoria(productos, 'Maderas');
+
   // Intervalo automático del carrusel de banners
   useEffect(() => {
     const intervalo = setInterval(() => {
@@ -113,7 +93,7 @@ function Home() {
 
   // Las ofertas creadas en el panel admin se muestran en la fila de maderas.
   // Si no tienen un enlace propio, se conserva el enlace al producto real.
-  const ofertasMaderas = OFERTAS_MADERAS_INICIO.map((oferta, indice) => {
+  const ofertasMaderas = ofertasMaderasBase.map((oferta, indice) => {
     const generada = ofertasGeneradas[indice];
     const enlaceGenerado =
       generada?.enlace && generada.enlace !== ENLACE_POR_DEFECTO ? generada.enlace : null;
@@ -247,7 +227,7 @@ function Home() {
       />
 
       {/* Ofertas destacadas de seguridad */}
-      <OfertaDestacada ofertas={OFERTAS_SEGURIDAD_INICIO} />
+      <OfertaDestacada ofertas={ofertasSeguridad} />
 
       {/* Banner de maderas estructurales */}
       <BannerPromocional

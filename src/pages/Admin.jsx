@@ -287,6 +287,13 @@ function Admin() {
       {/* Contenedor Principal */}
       <main className="container-fluid px-3 px-md-4 py-4">
 
+        {/* Hasta la etapa E7 este panel sigue con datos locales: se avisa para no confundir con la tienda */}
+        <div className="alert alert-warning rounded-2 mb-3" role="note">
+          <strong>Datos locales de demostración.</strong> Los productos y las órdenes de este panel todavía no están
+          conectados a la API (se integran en la etapa E7): lo que cambies aquí no se refleja en la tienda y las compras de
+          los clientes no aparecen en estas listas.
+        </div>
+
         {/* Notificación informativa */}
         {mensajeAlerta && (
           <div className="admin-box p-3 mb-3 d-flex justify-content-between align-items-center" role="alert">
