@@ -15,6 +15,7 @@ Tienda online de Ferrefix para la venta de productos de ferretería, con navegac
 ```bash
 npm install
 npm run dev
+```
 
 ## Configuración de la API
 
@@ -28,3 +29,17 @@ npm run dev
 - Desarrollo, tests y cobertura usan `http://localhost:8080` si no está definida.
 - **El build de producción exige la variable** (se incrusta al compilar): `VITE_API_URL=http://<ELASTIC_IP>:8080 npm run build`.
 - Tests: `npm test`. Cobertura (texto, HTML en `coverage/` y `coverage/coverage-summary.json`): `npm run test:coverage`.
+
+## Despliegue con Docker
+
+El front se construye con Vite y se sirve con nginx en el puerto 80 (`Dockerfile`, `nginx.conf` y `docker-compose.yml`). En el servidor:
+
+```bash
+cp .env.production.example .env     # plantilla de producción
+nano .env                           # reemplaza <IP-DEL-BACKEND> por la IP pública del backend
+docker compose up -d --build
+```
+
+- `.env.example` **sigue siendo la plantilla de desarrollo**: su valor por defecto es `http://localhost:8080`. `.env.production.example` es solo para el servidor.
+- `VITE_API_URL` se incrusta al compilar y el compose la exige (sin valor por defecto): si cambia la IP, vuelve a ejecutar `docker compose up -d --build`.
+- Para detener sin borrar nada: `docker compose stop`.
