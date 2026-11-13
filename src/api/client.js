@@ -23,9 +23,10 @@ export function configurarCliente({ alSesionInvalida: callback } = {}) {
 /**
  * Un solo intento de HTTP, sin renovación. Lanza ApiError.
  * @param {string} ruta ruta absoluta del backend, p. ej. "/api/v1/productos"
- * @param {{metodo?:string, cuerpo?:any, formData?:FormData, auth?:boolean, signal?:AbortSignal}} opciones
+ * @param {{metodo?:string, cuerpo?:any, formData?:FormData, auth?:boolean, signal?:AbortSignal, tiempoMs?:number}} opciones
+ *        tiempoMs: espera máxima (por defecto TIEMPO_MAXIMO_MS; las subidas de imágenes usan más).
  */
-async function peticion(ruta, { metodo = 'GET', cuerpo, formData, auth = true, signal } = {}) {
+async function peticion(ruta, { metodo = 'GET', cuerpo, formData, auth = true, signal, tiempoMs = TIEMPO_MAXIMO_MS } = {}) {
   const url = /^https?:\/\//i.test(ruta) ? ruta : `${API_URL}${ruta}`;
   const cabeceras = { Accept: 'application/json' };
   let body;
@@ -45,7 +46,7 @@ async function peticion(ruta, { metodo = 'GET', cuerpo, formData, auth = true, s
   const temporizador = setTimeout(() => {
     venció = true;
     controlador.abort();
-  }, TIEMPO_MAXIMO_MS);
+  }, tiempoMs);
   if (signal) {
     if (signal.aborted) controlador.abort();
     else signal.addEventListener('abort', () => controlador.abort(), { once: true });

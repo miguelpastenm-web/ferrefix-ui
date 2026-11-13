@@ -31,6 +31,8 @@ export function useCarga(funcion, clave = '') {
 
   const cargando = resultado.clave !== claveActual;
   return {
+    // Último resultado bueno, aunque se esté recargando: permite refrescar una lista sin que desaparezca de la pantalla.
+    ultimos: resultado.datos,
     datos: cargando ? null : resultado.datos,
     error: cargando ? null : resultado.error,
     cargando,

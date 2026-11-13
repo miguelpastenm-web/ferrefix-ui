@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AYUDA_FORMATOS_IMAGEN, TIPOS_IMAGEN_PERMITIDOS, validarArchivoImagen } from '../api/imagenes';
 
 /*
   Zona de carga de imagen de producto (Permite seleccionar una imagen haciendo clic o arrastrándola y soltándola)
@@ -8,6 +9,7 @@ function ImagenProductoUploader({ archivo, onSeleccionar, onQuitar, imagenActual
   const previewRef = useRef('');
   const [arrastrando, setArrastrando] = useState(false);
   const [previsualizacion, setPrevisualizacion] = useState('');
+  const [errorArchivo, setErrorArchivo] = useState('');
 
   // Libera la URL temporal al desmontar el componente.
   useEffect(() => {
@@ -26,6 +28,10 @@ function ImagenProductoUploader({ archivo, onSeleccionar, onQuitar, imagenActual
   const aceptarArchivo = useCallback(
     (file) => {
       if (!file) return;
+      // Prechequeo de tipo y tamaño (el servidor vuelve a validar por el contenido del archivo)
+      const mensaje = validarArchivoImagen(file);
+      setErrorArchivo(mensaje);
+      if (mensaje) return;
       reemplazarPrevisualizacion(file);
       onSeleccionar(file);
     },
@@ -33,6 +39,7 @@ function ImagenProductoUploader({ archivo, onSeleccionar, onQuitar, imagenActual
   );
 
   const handleQuitar = useCallback(() => {
+    setErrorArchivo('');
     reemplazarPrevisualizacion(null);
     onQuitar();
   }, [onQuitar, reemplazarPrevisualizacion]);
@@ -69,7 +76,7 @@ function ImagenProductoUploader({ archivo, onSeleccionar, onQuitar, imagenActual
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept={TIPOS_IMAGEN_PERMITIDOS.join(',')}
         className="d-none"
         onChange={handleInputChange}
       />
@@ -108,11 +115,15 @@ function ImagenProductoUploader({ archivo, onSeleccionar, onQuitar, imagenActual
               Arrastra una imagen aquí o haz clic para seleccionarla
             </div>
             <div className="admin-upload-hint">
-              Formatos: JPG, PNG, WEBP, GIF o AVIF · Máximo 6 MB
+              {AYUDA_FORMATOS_IMAGEN}
             </div>
           </div>
         )}
       </div>
+
+      {errorArchivo && (
+        <div className="text-danger small mt-2" role="alert">{errorArchivo}</div>
+      )}
 
       {archivo && (
         <div className="d-flex justify-content-between align-items-center mt-2">

@@ -1,13 +1,13 @@
 // Test: Panel Admin: ya no tiene login interno; el acceso lo decide la ruta protegida por rol y "Salir" cierra la sesión del contexto
 // Función: Admin(), RutaProtegida()
 
-import { describe, test, expect, afterEach, beforeEach } from 'vitest';
+import { describe, test, expect, afterEach, beforeEach, vi } from 'vitest';
 import { screen, cleanup, fireEvent } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
 import Admin from '../pages/Admin.jsx';
 import RutaProtegida from '../components/RutaProtegida.jsx';
 import { renderConAuth, Ubicacion } from './helpers/renderConAuth.js';
-import { USUARIO_CLIENTE, USUARIO_ADMIN } from './helpers/fetchMock.js';
+import { USUARIO_CLIENTE, USUARIO_ADMIN, instalarFetch, respuestaJson } from './helpers/fetchMock.js';
 
 const conRuta = (
   <Routes>
@@ -17,8 +17,14 @@ const conRuta = (
 );
 
 describe('Panel Admin sin login interno', () => {
-  beforeEach(() => localStorage.clear());
-  afterEach(() => cleanup());
+  beforeEach(() => {
+    localStorage.clear();
+    instalarFetch(() => respuestaJson(200, []));
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
   test('Anónimo en /admin: va a /login?next=/admin y el panel no se monta', () => {
     renderConAuth(conRuta, { rutaInicial: '/admin' });

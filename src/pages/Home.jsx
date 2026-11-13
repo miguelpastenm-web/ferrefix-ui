@@ -8,6 +8,7 @@ import {
   obtenerOfertasGeneradas
 } from '../data/generadores';
 import { listarProductos } from '../api/productos';
+import { urlMedia } from '../api/media';
 import { useCarga } from '../hooks/useCarga';
 import { ofertasDeCategoria } from '../utils/ofertas';
 
@@ -99,7 +100,7 @@ function Home() {
       generada?.enlace && generada.enlace !== ENLACE_POR_DEFECTO ? generada.enlace : null;
 
     return {
-      img: generada?.imagen || oferta.img,
+      img: generada?.imagen ? urlMedia(generada.imagen) : oferta.img,
       link: enlaceGenerado || oferta.link,
       alt: generada?.alt || oferta.alt
     };
