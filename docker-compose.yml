@@ -1,0 +1,17 @@
+# Front de Ferrefix: nginx sirviendo el build de Vite en el puerto 80.
+# VITE_API_URL se lee del .env del servidor (ver .env.example) y se incrusta al construir la imagen.
+services:
+  web:
+    build:
+      context: .
+      args:
+        VITE_API_URL: ${VITE_API_URL:?define VITE_API_URL en .env}
+    container_name: ferrefix_web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
