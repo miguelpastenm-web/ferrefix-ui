@@ -1,8 +1,8 @@
-// Test: API de productos: arma la consulta sin enviar nunca la categoría "Todas", adapta el DTO (imágenes con urlMedia, precioVenta como precio final) y traduce los errores
-// Función: listarProductos(), obtenerProducto(), armarQuery(), adaptarProducto()
+// Test: API de productos: arma la consulta sin enviar nunca la categoría "Todas", adapta el DTO (imágenes con urlMedia, precioVenta como precio final), traduce los errores y crea, edita y elimina como ADMIN
+// Función: listarProductos(), obtenerProducto(), armarQuery(), adaptarProducto(), crearProducto(), actualizarProducto(), eliminarProducto()
 
 import { describe, test, expect, afterEach, beforeEach, vi } from 'vitest';
-import { listarProductos, obtenerProducto, armarQuery, adaptarProducto, CATEGORIA_TODAS } from '../api/productos.js';
+import { listarProductos, obtenerProducto, armarQuery, adaptarProducto, crearProducto, actualizarProducto, eliminarProducto, CATEGORIA_TODAS } from '../api/productos.js';
 import { API_URL } from '../api/config.js';
 import { guardarSesion, borrarSesion } from '../api/sesionAlmacen.js';
 import { instalarFetch, llamadasDe, respuestaJson, errorBackend } from './helpers/fetchMock.js';
@@ -80,5 +80,66 @@ describe('API de productos', () => {
     const error = await obtenerProducto(99).catch((e) => e);
     expect(error.status).toBe(404);
     expect(error.mensaje).toBe('Producto no encontrado: 99');
+  });
+
+  test('adaptarProducto: además de la imagen lista para mostrar conserva las rutas RELATIVAS del backend (las que se reenvían al editar)', () => {
+    const p = adaptarProducto(dtoProducto(7, { imagenOfertaUrl: '/media/ofertas/x.webp' }));
+    expect(p.imagenUrl).toBe('/media/productos/p7.webp');
+    expect(p.imagenOfertaUrl).toBe('/media/ofertas/x.webp');
+    expect(adaptarProducto(dtoProducto(8)).imagenOfertaUrl).toBeNull();
+  });
+
+  const DTO = { sku: 'ABC-1', nombre: 'Taladro', marca: 'Bosch', categoria: 'Herramientas', precioVenta: 1000, stock: 3, descripcion: null, imagenUrl: null, imagenOfertaUrl: null, especificaciones: { Potencia: '800 W' } };
+
+  test('crearProducto (ADMIN): POST /productos con Bearer y el DTO tal cual; devuelve el producto adaptado', async () => {
+    guardarSesion({ accessToken: 'tok', refreshToken: 'r' });
+    const falso = instalarFetch(() => respuestaJson(201, dtoProducto(20, { sku: 'ABC-1' })));
+    const creado = await crearProducto(DTO);
+    const [l] = llamadasDe(falso);
+    expect(l.metodo).toBe('POST');
+    expect(l.ruta).toBe('/api/v1/productos');
+    expect(l.authorization).toBe('Bearer tok');
+    expect(l.cuerpo).toEqual(DTO);
+    expect(creado.id).toBe(20);
+    expect(creado.imagen).toBe(`${API_URL}/media/productos/p20.webp`);
+  });
+
+  test('crearProducto: el 409 por SKU repetido y el 400 con detalles llegan como ApiError', async () => {
+    instalarFetch(() => errorBackend(409, 'Ya existe un producto con el SKU ABC-1'));
+    const repetido = await crearProducto(DTO).catch((e) => e);
+    expect(repetido.status).toBe(409);
+    expect(repetido.mensaje).toBe('Ya existe un producto con el SKU ABC-1');
+    instalarFetch(() => errorBackend(400, 'Datos de entrada inválidos', ['precioVenta: El precio debe ser mayor a 0']));
+    const invalido = await crearProducto({ ...DTO, precioVenta: 0 }).catch((e) => e);
+    expect(invalido.status).toBe(400);
+    expect(invalido.detalles).toEqual(['precioVenta: El precio debe ser mayor a 0']);
+  });
+
+  test('actualizarProducto: PUT /productos/{id} con el producto completo; 404 y 409 llegan como ApiError', async () => {
+    guardarSesion({ accessToken: 'tok', refreshToken: 'r' });
+    const falso = instalarFetch(() => respuestaJson(200, dtoProducto(5, { nombre: 'Nuevo' })));
+    const p = await actualizarProducto(5, DTO);
+    const [l] = llamadasDe(falso);
+    expect(l.metodo).toBe('PUT');
+    expect(l.ruta).toBe('/api/v1/productos/5');
+    expect(l.authorization).toBe('Bearer tok');
+    expect(l.cuerpo).toEqual(DTO);
+    expect(p.nombre).toBe('Nuevo');
+    instalarFetch(() => errorBackend(404, 'Producto no encontrado: 5'));
+    expect((await actualizarProducto(5, DTO).catch((e) => e)).status).toBe(404);
+    instalarFetch(() => errorBackend(409, 'Ya existe otro producto con el SKU ABC-1'));
+    expect((await actualizarProducto(5, DTO).catch((e) => e)).status).toBe(409);
+  });
+
+  test('eliminarProducto: DELETE /productos/{id} (204 sin cuerpo) y el 404 llega como ApiError', async () => {
+    guardarSesion({ accessToken: 'tok', refreshToken: 'r' });
+    const falso = instalarFetch(() => respuestaJson(204));
+    expect(await eliminarProducto(5)).toBeUndefined();
+    const [l] = llamadasDe(falso);
+    expect(l.metodo).toBe('DELETE');
+    expect(l.ruta).toBe('/api/v1/productos/5');
+    expect(l.authorization).toBe('Bearer tok');
+    instalarFetch(() => errorBackend(404, 'Producto no encontrado: 5'));
+    expect((await eliminarProducto(5).catch((e) => e)).status).toBe(404);
   });
 });

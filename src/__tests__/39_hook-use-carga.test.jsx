@@ -46,4 +46,17 @@ describe('useCarga', () => {
     await act(async () => lenta.resolver('LENTA'));
     expect(result.current.datos).toBe('rapida');
   });
+
+  test('"ultimos" conserva el último resultado bueno mientras se recarga (la lista no desaparece de la pantalla)', async () => {
+    let n = 0;
+    const { result } = renderHook(() => useCarga(() => Promise.resolve(`lista-${(n += 1)}`), 'x'));
+    expect(result.current.ultimos).toBeNull();
+    await waitFor(() => expect(result.current.datos).toBe('lista-1'));
+    act(() => result.current.recargar());
+    expect(result.current.cargando).toBe(true);
+    expect(result.current.datos).toBeNull();
+    expect(result.current.ultimos).toBe('lista-1');
+    await waitFor(() => expect(result.current.datos).toBe('lista-2'));
+    expect(result.current.ultimos).toBe('lista-2');
+  });
 });

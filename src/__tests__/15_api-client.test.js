@@ -3,7 +3,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { api, configurarCliente } from '../api/client.js';
-import { API_URL, TIEMPO_MAXIMO_MS } from '../api/config.js';
+import { API_URL, TIEMPO_MAXIMO_MS, TIEMPO_MAXIMO_SUBIDA_MS } from '../api/config.js';
 import { ApiError, MENSAJE_SIN_CONEXION, MENSAJE_TIEMPO_AGOTADO } from '../api/errores.js';
 import { guardarSesion, leerSesion, borrarSesion } from '../api/sesionAlmacen.js';
 import { instalarFetch, llamadasDe, respuestaJson, errorBackend, diferido, tokensDe, USUARIO_CLIENTE } from './helpers/fetchMock.js';
@@ -124,6 +124,27 @@ describe('Cliente HTTP — petición y respuesta', () => {
     expect(error.status).toBe(0);
     expect(error.tiempoAgotado).toBe(true);
     expect(error.mensaje).toBe(MENSAJE_TIEMPO_AGOTADO);
+  });
+  test('api: con tiempoMs propio (subidas de imágenes) espera más que el tiempo normal y recién entonces da tiempo agotado', async () => {
+    vi.useFakeTimers();
+    instalarFetch(
+      (l) =>
+        new Promise((_, rechazar) => {
+          l.init.signal.addEventListener('abort', () => rechazar(new DOMException('Aborted', 'AbortError')));
+        })
+    );
+    expect(TIEMPO_MAXIMO_SUBIDA_MS).toBe(60000);
+    let terminada = false;
+    const resultado = api('/api/v1/imagenes', { metodo: 'POST', formData: new FormData(), tiempoMs: TIEMPO_MAXIMO_SUBIDA_MS }).catch((e) => {
+      terminada = true;
+      return e;
+    });
+    await vi.advanceTimersByTimeAsync(TIEMPO_MAXIMO_MS + 1000); // pasó el tiempo normal: sigue esperando
+    expect(terminada).toBe(false);
+    await vi.advanceTimersByTimeAsync(TIEMPO_MAXIMO_SUBIDA_MS);
+    const error = await resultado;
+    expect(error.tiempoAgotado).toBe(true);
+    expect(error.status).toBe(0);
   });
 });
 
