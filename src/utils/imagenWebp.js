@@ -2,15 +2,17 @@
  * Utilidades de imágenes para los generadores del panel administrativo.
  *
  * Toda imagen generada se dibuja en un <canvas>, se convierte a WebP y se
- * envía al servidor de Vite para quedar guardada dentro de `src/assets`.
- * El guardado es directo: no se generan descargas ni referencias incrustadas.
+ * sube al backend (POST /api/v1/imagenes), que la guarda y la sirve en /media/<destino>/.
+ * Lo que se guarda es la RUTA RELATIVA que devuelve el servidor (se muestra con urlMedia).
  */
+import { subirImagen } from '../api/imagenes';
 
-export const DESTINO_PRODUCTOS = 'products';
-export const DESTINO_OFERTAS = 'sales';
+// Destinos del backend (lista cerrada: productos, ofertas, banners, maquinas)
+export const DESTINO_PRODUCTOS = 'productos';
+export const DESTINO_OFERTAS = 'ofertas';
 export const DESTINO_BANNERS = 'banners';
 
-const RUTA_API_GENERADOS = '/api/imagenes/webp';
+// Límite para las imágenes que se cargan en el lienzo del generador (la imagen que se sube pesa mucho menos)
 const TAMANO_MAXIMO_IMAGEN_BYTES = 12 * 1024 * 1024;
 
 /** Carga una imagen a partir de una URL, Data URL u objeto URL. */
@@ -128,56 +130,16 @@ export const nombreArchivoSeguro = (texto, respaldo = 'imagen') => {
 };
 
 /**
- * Envía una imagen ya convertida al servidor de Vite para guardarla en
- * `src/assets/<destino>`. Retorna la URL pública final.
+ * Sube al backend una imagen ya convertida (WebP) y devuelve su ruta relativa (/media/<destino>/<uuid>.webp).
+ * Lanza el ApiError del backend (400 si no es una imagen válida, 413 si supera 6 MB, 403/401 por permisos o sesión).
  */
-export const subirImagenGenerada = async (blob, nombre, destino = DESTINO_OFERTAS) => {
+export const guardarImagenGenerada = async (blob, nombre, destino = DESTINO_OFERTAS) => {
   if (!blob) {
     throw new Error('No hay una imagen para guardar.');
   }
-
-  if (blob.size > TAMANO_MAXIMO_IMAGEN_BYTES) {
-    throw new Error('La imagen generada supera el tamaño máximo permitido (12 MB).');
-  }
-
   const extension = blob.type === 'image/png' ? '.png' : '.webp';
-  const nombreFinal = `${nombreArchivoSeguro(nombre)}${extension}`;
-
-  const respuesta = await fetch(RUTA_API_GENERADOS, {
-    method: 'POST',
-    headers: {
-      'Content-Type': blob.type || 'image/webp',
-      'X-File-Name': encodeURIComponent(nombreFinal),
-      'X-Destino': destino
-    },
-    body: blob
-  });
-
-  const tipoRespuesta = respuesta.headers.get('content-type') || '';
-  if (!respuesta.ok || !tipoRespuesta.includes('application/json')) {
-    throw new Error('El servidor no pudo guardar la imagen en assets.');
-  }
-
-  const datos = await respuesta.json();
-  if (!datos.url) {
-    throw new Error(datos.error || 'El servidor no devolvió la URL de la imagen.');
-  }
-
-  return datos.url;
-};
-
-/**
- * Guarda la imagen en `src/assets`. Si el servidor de Vite no está disponible
- * lanza un error: no se guarda una referencia incrustada para evitar trabajo
- * manual posterior.
- */
-export const guardarWebpEnAssets = async (blob, nombre, destino = DESTINO_OFERTAS) => {
-  const url = await subirImagenGenerada(blob, nombre, destino);
-  return {
-    url,
-    guardadoEnAssets: true,
-    error: null
-  };
+  const { url } = await subirImagen(blob, destino, `${nombreArchivoSeguro(nombre)}${extension}`);
+  return url;
 };
 
 /** Formatea bytes para mostrarlos en la interfaz. */
