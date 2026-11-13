@@ -1,6 +1,5 @@
 import react from "@vitejs/plugin-react"
 import { defineConfig, loadEnv } from "vite"
-import productosUpload from "./vite-plugin-productos-upload.js"
 
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
@@ -19,10 +18,11 @@ export default defineConfig(({ command, mode }) => {
   }
 
   return {
-    plugins: [react(), productosUpload()],
+    plugins: [react()],
     test: {
       environment: "jsdom",
       globals: true,
+      setupFiles: ["./src/setupTests.js"],
       // Holgura para equipos lentos o con varias suites en paralelo (los formularios con ~350 comunas pesan en jsdom)
       testTimeout: 15000,
       coverage: {

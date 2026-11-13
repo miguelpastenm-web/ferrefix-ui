@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ImagenProductoUploader from './ImagenProductoUploader';
+import { urlMedia } from '../api/media';
 import OfertaDestacada from './OfertaDestacada';
 import {
   DESTINO_OFERTAS,
   convertirCanvasAWebp,
   formatearBytes,
-  guardarWebpEnAssets,
+  guardarImagenGenerada,
   nombreArchivoSeguro
 } from '../utils/imagenWebp';
 import {
@@ -315,10 +316,10 @@ function GeneradorProductos() {
         form.titulo || 'tarjeta-producto'
       )}`;
       const enlaceFinal = String(enlaces[slotActivo] ?? '').trim() || ENLACE_POR_DEFECTO;
-      const resultado = await guardarWebpEnAssets(blob, nombre, DESTINO_OFERTAS);
+      const urlGuardada = await guardarImagenGenerada(blob, nombre, DESTINO_OFERTAS);
 
       const guardado = guardarOfertaGenerada(slotActivo, {
-        imagen: resultado.url,
+        imagen: urlGuardada,
         enlace: enlaceFinal,
         alt: form.titulo || `Oferta destacada ${slotActivo + 1}`
       });
@@ -362,7 +363,7 @@ function GeneradorProductos() {
   const ofertasVista = useMemo(
     () =>
       OFERTAS_BASE.map((imagenBase, indice) => ({
-        imagen: ofertas[indice]?.imagen || imagenBase,
+        imagen: ofertas[indice]?.imagen ? urlMedia(ofertas[indice].imagen) : imagenBase,
         enlace: enlaces[indice] || ENLACE_POR_DEFECTO
       })),
     [ofertas, enlaces]
@@ -726,7 +727,7 @@ function GeneradorProductos() {
                           aria-pressed={slotActivo === indice}
                         >
                           {oferta?.imagen ? (
-                            <img src={oferta.imagen} alt={`Oferta ${indice + 1}`} />
+                            <img src={urlMedia(oferta.imagen)} alt={`Oferta ${indice + 1}`} />
                           ) : (
                             <span className="generador-slot-empty">Vacía</span>
                           )}
