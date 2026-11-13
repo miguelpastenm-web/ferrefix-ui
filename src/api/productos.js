@@ -1,4 +1,5 @@
-// Productos del backend (GET públicos, sin Authorization). El backend NO pagina: devuelve la lista completa.
+// Productos del backend. Las lecturas (GET) son públicas, sin Authorization; crear, editar y eliminar exigen ADMIN.
+// El backend NO pagina: devuelve la lista completa.
 //   GET /api/v1/productos?q=&categoria=&marca=&sort=campo[,asc|desc]   -> ProductoResponseDto[]
 //   GET /api/v1/productos/{id}                                         -> ProductoResponseDto  (404 si no existe)
 import { api } from './client';
@@ -26,6 +27,9 @@ export function adaptarProducto(dto) {
     estado: dto.estado,
     imagen: urlMedia(dto.imagenUrl),
     imagenOferta: dto.imagenOfertaUrl ? urlMedia(dto.imagenOfertaUrl) : null,
+    // Rutas tal como las guarda el backend (relativas): son las que hay que reenviar al editar un producto.
+    imagenUrl: dto.imagenUrl ?? null,
+    imagenOfertaUrl: dto.imagenOfertaUrl ?? null,
     descripcion: dto.descripcion ?? '',
     especificaciones: dto.especificaciones ?? {},
     createdAt: dto.createdAt,
@@ -54,4 +58,23 @@ export async function listarProductos(filtros = {}) {
 
 export async function obtenerProducto(id) {
   return adaptarProducto(await api(`${RUTA}/${encodeURIComponent(id)}`, { auth: false }));
+}
+
+// ---- ADMIN ------------------------------------------------------------------------------------------------------
+//   POST   /api/v1/productos        (ProductoRequestDto) -> 201 ProductoResponseDto   | 400 | 409 SKU repetido
+//   PUT    /api/v1/productos/{id}   (ProductoRequestDto) -> 200 ProductoResponseDto   | 400 | 404 | 409 SKU repetido
+//   DELETE /api/v1/productos/{id}                        -> 204                        | 404
+// OJO: el PUT REEMPLAZA todo (también especificaciones e imagenOfertaUrl): siempre hay que enviar el producto completo.
+// El estado (DISPONIBLE/AGOTADO) lo calcula el servidor según el stock.
+
+export async function crearProducto(dto) {
+  return adaptarProducto(await api(RUTA, { metodo: 'POST', cuerpo: dto }));
+}
+
+export async function actualizarProducto(id, dto) {
+  return adaptarProducto(await api(`${RUTA}/${encodeURIComponent(id)}`, { metodo: 'PUT', cuerpo: dto }));
+}
+
+export async function eliminarProducto(id) {
+  await api(`${RUTA}/${encodeURIComponent(id)}`, { metodo: 'DELETE' });
 }

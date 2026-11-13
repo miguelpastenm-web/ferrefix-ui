@@ -6,6 +6,9 @@ export const API_URL_POR_DEFECTO = 'http://localhost:8080';
 /** Tiempo máximo de espera de una petición. */
 export const TIEMPO_MAXIMO_MS = 15000;
 
+/** Tiempo máximo solo para subir imágenes (hasta 6 MB, que en una conexión lenta tardan más que una consulta). */
+export const TIEMPO_MAXIMO_SUBIDA_MS = 60000;
+
 /** Recorta espacios y quita barras finales: "http://x:8080/ " -> "http://x:8080". */
 export const normalizarUrlBase = (valor) => String(valor ?? '').trim().replace(/\/+$/, '');
 
