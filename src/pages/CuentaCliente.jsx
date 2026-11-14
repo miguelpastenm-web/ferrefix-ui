@@ -4,7 +4,7 @@ import { useAuth } from "../context/authContexto";
 import { actualizarPerfil } from "../api/usuarios";
 import { ApiError, erroresPorCampo } from "../api/errores";
 import HistorialCompras from "../components/HistorialCompras";
-import { obtenerContratosArriendo, EVENTO_MAQUINARIAS_ACTUALIZADAS } from "../data/maquinarias";
+import HistorialArriendos from "../components/HistorialArriendos";
 import { REGIONES_CHILE, normalizarRegion, obtenerComunas } from "../data/chile";
 import { validadores, formatearTelefono } from "../data/validaciones";
 import { mostrarToast } from "../components/ToastNotificacion";
@@ -15,7 +15,6 @@ export default function CuentaCliente() {
   const [tabActiva, setTabActiva] = useState(tabInicial);
 
   const { usuario: sesion, actualizarUsuario } = useAuth();
-  const [arriendos, setArriendos] = useState([]);
 
   // Formulario de edición de datos
   const [editando, setEditando] = useState(false);
@@ -45,40 +44,9 @@ export default function CuentaCliente() {
     });
   }, [sesion]);
 
-  useEffect(() => {
-    if (!sesion) return;
-
-    const cargarArriendos = () => {
-      const todos = obtenerContratosArriendo();
-      const mios = todos.filter(
-        (c) =>
-          (c.usuario && c.usuario.email && c.usuario.email.toLowerCase() === sesion.email.toLowerCase()) ||
-          (c.usuario && c.usuario.idUsuario === sesion.id) ||
-          (sesion.rut && c.usuario && c.usuario.rut === sesion.rut)
-      );
-      setArriendos(mios);
-    };
-
-    cargarArriendos();
-
-    window.addEventListener(EVENTO_MAQUINARIAS_ACTUALIZADAS, cargarArriendos);
-
-    return () => {
-      window.removeEventListener(EVENTO_MAQUINARIAS_ACTUALIZADAS, cargarArriendos);
-    };
-  }, [sesion]);
-
   const cambiarTab = (nuevaTab) => {
     setTabActiva(nuevaTab);
     setSearchParams({ tab: nuevaTab });
-  };
-
-  const formatearCLP = (valor) => {
-    return new Intl.NumberFormat("es-CL", {
-      style: "currency",
-      currency: "CLP",
-      maximumFractionDigits: 0
-    }).format(valor || 0);
   };
 
   const handleGuardarDatos = async (e) => {
@@ -191,7 +159,7 @@ export default function CuentaCliente() {
             onClick={() => cambiarTab("arriendos")}
           >
             <i className="bi bi-tools me-2"></i>
-            Mis Arriendos ({arriendos.length})
+            Mis Arriendos
           </button>
         </div>
 
@@ -387,66 +355,7 @@ export default function CuentaCliente() {
         {/* ============================================================== */}
         {/* TAB 3: MIS ARRIENDOS DE MAQUINARIA                             */}
         {/* ============================================================== */}
-        {tabActiva === "arriendos" && (
-          <div className="info-card shadow-sm p-4 p-md-5">
-            <div className="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom flex-wrap gap-2">
-              <div>
-                <h2 className="info-section-title mb-1">Mis Contratos de Arriendo de Maquinaria</h2>
-                <span className="text-muted small">Control de equipos en obra, vigencia de contratos y tarifas diarias</span>
-              </div>
-              <Link to="/arriendos" className="btn btn-ambar btn-sm rounded-1 px-3 fw-bold">
-                <i className="bi bi-plus-circle me-1"></i> Arrendar Nuevo Equipo
-              </Link>
-            </div>
-
-            {arriendos.length === 0 ? (
-              <div className="text-center py-5">
-                <i className="bi bi-truck text-muted display-4 mb-3 d-block"></i>
-                <h3 className="h5 text-dark mb-2">No tienes maquinarias arrendadas actualmente</h3>
-                <p className="text-secondary small mb-4">
-                  Contamos con martillos demoledores Bosch, betoneras Ingco, placas compactadoras Husqvarna y generadores Krafter listos para tu faena.
-                </p>
-                <Link to="/arriendos" className="btn btn-ambar px-4 py-2 rounded-1 fw-bold">
-                  Ver Equipos Disponibles
-                </Link>
-              </div>
-            ) : (
-              <div className="row g-3">
-                {arriendos.map((contrato) => (
-                  <div key={contrato.idContrato} className="col-12 col-md-6">
-                    <div className="border rounded-1 p-4 bg-white shadow-sm h-100 d-flex flex-column justify-content-between">
-                      <div>
-                        <div className="d-flex justify-content-between align-items-start mb-2">
-                          <span className={`badge ${contrato.estado === "Vigente" ? "bg-success" : "bg-secondary"}`}>
-                            ● {contrato.estado || "Vigente"}
-                          </span>
-                          <span className="badge bg-light text-dark border font-monospace">
-                            Contrato #{contrato.idContrato}
-                          </span>
-                        </div>
-
-                        <h3 className="h5 fw-bold text-dark mb-1">{contrato.nombreMaquina}</h3>
-                        <div className="text-muted small mb-3">Marca: {contrato.marcaMaquina || "Industrial"}</div>
-
-                        <div className="p-3 bg-light rounded-1 border mb-3 small">
-                          <div><strong>Tarifa diaria:</strong> {formatearCLP(contrato.tarifaDia)} / día</div>
-                          <div><strong>Período:</strong> {contrato.diasArriendo} días (Desde {contrato.fechaInicio})</div>
-                          <div><strong>Lugar de Faena:</strong> {contrato.usuario?.direccion || "Obra informada"}, {contrato.usuario?.comuna || ""}</div>
-                          <div><strong>Fecha de Solicitud:</strong> {contrato.fechaContrato}</div>
-                        </div>
-                      </div>
-
-                      <div className="d-flex justify-content-between align-items-center pt-2 border-top">
-                        <span className="text-muted small">Costo Total Arriendo:</span>
-                        <strong className="text-dark fs-5 font-monospace">{formatearCLP(contrato.totalPagar)}</strong>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {tabActiva === "arriendos" && <HistorialArriendos />}
 
       </div>
     </div>

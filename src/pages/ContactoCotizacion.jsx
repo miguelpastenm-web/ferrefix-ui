@@ -1,6 +1,8 @@
 import { mostrarToast } from "../components/ToastNotificacion";
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { crearCotizacion } from '../api/cotizaciones';
+import { ApiError, erroresPorCampo } from '../api/errores';
 import { useAuth } from '../context/authContexto';
 import { REGIONES_CHILE, REGION_POR_DEFECTO } from '../data/chile';
 import {
@@ -23,12 +25,12 @@ function ContactoCotizacion() {
   const { usuario: sesion } = useAuth();
 
   const valorInicial = {
-    nombre: sesion ? sesion.nombre : '',
-    rut: '',
-    email: sesion ? sesion.email : '',
-    telefono: '',
+    nombre: sesion?.nombre ?? '',
+    rut: sesion?.rut ?? '',
+    email: sesion?.email ?? '',
+    telefono: sesion?.telefono ?? '',
     tipoProyecto: 'Herramientas de Alto Rendimiento',
-    region: REGION_POR_DEFECTO,
+    region: sesion?.region || REGION_POR_DEFECTO,
     detalle: '',
     despachoObra: true
   };
@@ -36,6 +38,10 @@ function ContactoCotizacion() {
   const [form, setForm] = useState(valorInicial);
   const [errores, setErrores] = useState({});
   const [touched, setTouched] = useState({});
+  const [enviando, setEnviando] = useState(false);
+  const enviandoRef = useRef(false);
+  const [errorEnvio, setErrorEnvio] = useState('');
+  const [acuse, setAcuse] = useState(null);
 
   // Valida un solo campo (lo usa onChange/onBlur).
   const validarCampo = (campo, valor) => {
@@ -59,8 +65,11 @@ function ContactoCotizacion() {
   const claseCampo = (campo, base = 'form-control form-control-sm rounded-1') =>
     `${base}${errores[campo] ? ' is-invalid' : ''}`;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (enviandoRef.current) return;
+    setErrorEnvio('');
+    setAcuse(null);
 
     const nuevosErrores = validarFormulario(REGLAS_VALIDACION, form);
     setErrores(nuevosErrores);
@@ -72,27 +81,28 @@ function ContactoCotizacion() {
       return;
     }
 
-    const cotizacion = {
-      idCotizacion: `COT-${Date.now().toString().slice(-6)}`,
-      fecha: new Date().toLocaleString('es-CL'),
-      ...form
-    };
-
-    // Guardar en localStorage
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const previas = JSON.parse(localStorage.getItem('ferrefix_cotizaciones_v1') || '[]');
-      localStorage.setItem('ferrefix_cotizaciones_v1', JSON.stringify([cotizacion, ...previas]));
+    enviandoRef.current = true;
+    setEnviando(true);
+    try {
+      const respuesta = await crearCotizacion(form);
+      setAcuse(respuesta);
+      mostrarToast({
+        titulo: "¡Cotización Enviada!",
+        mensaje: `Tu número de cotización es ${respuesta.codigo}. Un asesor se pondrá en contacto a la brevedad.`,
+        tipo: "success",
+        duracion: 6000
+      });
+      setForm({ ...valorInicial, detalle: '' });
+      setErrores({});
+      setTouched({});
+    } catch (err) {
+      if (!(err instanceof ApiError)) throw err;
+      setErrores((prev) => ({ ...prev, ...erroresPorCampo(err) }));
+      setErrorEnvio(err.mensaje);
+    } finally {
+      enviandoRef.current = false;
+      setEnviando(false);
     }
-
-    mostrarToast({
-      titulo: "¡Cotización Enviada!",
-      mensaje: `Tu número de cotización es #${cotizacion.idCotizacion}. Un asesor se pondrá en contacto a la brevedad.`,
-      tipo: "success",
-      duracion: 6000
-    });
-    setForm({ ...valorInicial, nombre: '', email: '' });
-    setErrores({});
-    setTouched({});
   };
 
   return (
@@ -306,12 +316,29 @@ function ContactoCotizacion() {
                     </div>
                   </div>
 
+                  {errorEnvio && (
+                    <div className="col-12">
+                      <div className="alert alert-danger py-2 mb-0" role="alert">
+                        {errorEnvio}
+                      </div>
+                    </div>
+                  )}
+
+                  {acuse && (
+                    <div className="col-12">
+                      <div className="alert alert-success py-2 mb-0" role="status">
+                        Solicitud registrada con código <strong>{acuse.codigo}</strong>. Un asesor se pondrá en contacto a la brevedad.
+                      </div>
+                    </div>
+                  )}
+
                   <div className="col-12 pt-2">
                     <button 
                       type="submit" 
                       className="btn btn-ambar cot-submit-btn px-4 py-2 rounded-1 shadow-sm"
+                      disabled={enviando}
                     >
-                      Enviar Solicitud de Cotización
+                      {enviando ? 'Enviando solicitud…' : 'Enviar Solicitud de Cotización'}
                     </button>
                   </div>
 
