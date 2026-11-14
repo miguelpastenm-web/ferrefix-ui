@@ -74,7 +74,7 @@ describe('Página Registro', () => {
   const llenarValido = () => {
     escribir(/Nombre Completo/, 'Ana Pérez');
     escribir(/RUN/, '12.345.678-5');
-    escribir(/Correo/, 'ana@correo.cl');
+    escribir(/Correo/, 'ana@gmail.com');
     escribir(/Contraseña/, 'segura123');
   };
 
@@ -104,8 +104,17 @@ describe('Página Registro', () => {
     llenarValido();
     enviar('Registrarme e Iniciar Sesión');
     await waitFor(() => expect(valor.registrar).toHaveBeenCalledWith({
-      rut: '12.345.678-5', nombre: 'Ana Pérez', email: 'ana@correo.cl', password: 'segura123'
+      rut: '12.345.678-5', nombre: 'Ana Pérez', email: 'ana@gmail.com', password: 'segura123'
     }));
+  });
+
+  test('Registro: rechaza correos fuera de @duoc.cl, @profesor.duoc.cl o @gmail.com sin llamar a la API', () => {
+    const { valor } = renderConAuth(pagina, { rutaInicial: '/registro' });
+    llenarValido();
+    escribir(/Correo/, 'ana@ferrefix.cl');
+    enviar('Registrarme e Iniciar Sesión');
+    expect(screen.getByText(/Solo se permiten correos @duoc\.cl, @profesor\.duoc\.cl o @gmail\.com\./)).toBeTruthy();
+    expect(valor.registrar).not.toHaveBeenCalled();
   });
 
   test('Registro: los errores 400 con "details" del backend aparecen junto a su campo', async () => {

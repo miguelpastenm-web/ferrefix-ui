@@ -79,6 +79,8 @@ export const formatearTelefono = (telefono) => {
   return `+56 ${digitos}`;
 };
 
+export const DOMINIOS_CORREO_REGISTRO = ['duoc.cl', 'profesor.duoc.cl', 'gmail.com'];
+
 // ---- Validadores -----------------------------------------------------------
 
 export const validadores = {
@@ -114,6 +116,16 @@ export const validadores = {
     const v = texto(valor);
     if (!v) return 'El correo electrónico es obligatorio.';
     if (!REGEX_EMAIL.test(v)) return 'Ingresa un correo válido (ej: nombre@correo.cl).';
+    return '';
+  },
+
+  emailRegistro: (valor) => {
+    const errorBase = validadores.email(valor);
+    if (errorBase) return errorBase;
+    const dominio = texto(valor).split('@')[1]?.toLowerCase() ?? '';
+    if (!DOMINIOS_CORREO_REGISTRO.includes(dominio)) {
+      return 'Solo se permiten correos @duoc.cl, @profesor.duoc.cl o @gmail.com.';
+    }
     return '';
   },
 

@@ -14,4 +14,15 @@ describe('Validador de correo electrónico', () => {
 
     expect(validadores.email('   ')).toBe('El correo electrónico es obligatorio.');
   });
+
+  test('validadores.emailRegistro: solo acepta @duoc.cl, @profesor.duoc.cl y @gmail.com', () => {
+    expect(validadores.emailRegistro('alumno@duoc.cl')).toBe('');
+    expect(validadores.emailRegistro('docente@profesor.duoc.cl')).toBe('');
+    expect(validadores.emailRegistro('cliente@GMAIL.COM')).toBe('');
+
+    const errorDominio = 'Solo se permiten correos @duoc.cl, @profesor.duoc.cl o @gmail.com.';
+    expect(validadores.emailRegistro('admin@ferrefix.cl')).toBe(errorDominio);
+    expect(validadores.emailRegistro('otro@yahoo.com')).toBe(errorDominio);
+    expect(validadores.emailRegistro('   ')).toBe('El correo electrónico es obligatorio.');
+  });
 });

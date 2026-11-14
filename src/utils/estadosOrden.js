@@ -12,7 +12,7 @@ export const ESTADOS_ORDEN = {
 export const infoEstadoOrden = (estado) =>
   ESTADOS_ORDEN[estado] ?? { etiqueta: estado ? String(estado) : 'Sin estado', clase: 'bg-secondary-subtle text-secondary border border-secondary-subtle' };
 
-/** Medios de pago simulados: valor del enum del backend -> texto del checkout. */
+/** Medios de pago aceptados: valor del enum del backend -> texto del checkout. */
 export const METODOS_PAGO = [
   { valor: 'WEBPAY_DEBITO', etiqueta: 'WebPay Plus / RedCompra (Débito)' },
   { valor: 'TARJETA_CREDITO', etiqueta: 'Tarjeta de Crédito (3 cuotas sin interés)' },

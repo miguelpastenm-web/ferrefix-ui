@@ -30,7 +30,7 @@ function Login() {
 
   const reglasActuales = () =>
     modo === 'registro'
-      ? { nombre: validadores.nombre, rut: validadores.rut, email: validadores.email, password: validadores.password }
+      ? { nombre: validadores.nombre, rut: validadores.rut, email: validadores.emailRegistro, password: validadores.password }
       : { email: validadores.email, password: validadores.requerido('La contraseña') };
 
   const valores = { nombre, rut, email, password };
