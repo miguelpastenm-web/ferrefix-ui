@@ -1,4 +1,4 @@
-![Ferrefix](/public/banner-web.webp)
+![Ferrefix](public/banner-web.webp)
 
 Tienda online de Ferrefix para la venta de productos de ferretería, con navegación simple, diseño responsivo y una experiencia de compra clara, pensada para facilitar la búsqueda y selección de productos desde cualquier dispositivo.
 
@@ -29,6 +29,7 @@ npm run dev
 - Desarrollo, tests y cobertura usan `http://localhost:8080` si no está definida.
 - **El build de producción exige la variable** (se incrusta al compilar): `VITE_API_URL=http://<ELASTIC_IP>:8080 npm run build`.
 - Tests: `npm test`. Cobertura (texto, HTML en `coverage/` y `coverage/coverage-summary.json`): `npm run test:coverage`.
+- Linter: `npm run lint`. Vista previa local del build de producción: `npm run preview`.
 
 ## Despliegue con Docker
 
