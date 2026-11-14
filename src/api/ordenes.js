@@ -35,3 +35,40 @@ export const misOrdenes = async () => {
 };
 
 export const obtenerOrden = (id) => api(`${RUTA}/${encodeURIComponent(id)}`);
+
+const textoUtil = (valor) => (typeof valor === 'string' ? valor.trim() : '');
+
+/** Arma la query de órdenes omitiendo filtros vacíos. */
+export function armarQueryOrdenes({ estado, usuarioId } = {}) {
+  const params = new URLSearchParams();
+  const est = textoUtil(estado);
+  if (est && est.toLowerCase() !== 'todos' && est.toLowerCase() !== 'todas') {
+    params.set('estado', est);
+  }
+  if (usuarioId !== undefined && usuarioId !== null && String(usuarioId).trim() !== '') {
+    params.set('usuarioId', String(usuarioId).trim());
+  }
+  const texto = params.toString();
+  return texto ? `?${texto}` : '';
+}
+
+// ---- ADMIN ------------------------------------------------------------------------------------------------------
+//   GET    /api/v1/ordenes?estado=&usuarioId=   -> OrdenResponseDto[]
+//   PATCH  /api/v1/ordenes/{id}/estado          -> { estado } -> 200 OrdenResponseDto | 400 | 404 | 409
+//   DELETE /api/v1/ordenes/{id}                 -> 204 | 404 | 409
+
+export async function listarOrdenes(filtros = {}) {
+  const lista = await api(`${RUTA}${armarQueryOrdenes(filtros)}`);
+  return Array.isArray(lista) ? lista : [];
+}
+
+export function cambiarEstadoOrden(id, estado) {
+  return api(`${RUTA}/${encodeURIComponent(id)}/estado`, {
+    metodo: 'PATCH',
+    cuerpo: { estado }
+  });
+}
+
+export async function eliminarOrden(id) {
+  await api(`${RUTA}/${encodeURIComponent(id)}`, { metodo: 'DELETE' });
+}

@@ -30,3 +30,29 @@ export function formatearFechaOrden(texto) {
   const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(texto.trim());
   return m ? `${m[3]}-${m[2]}-${m[1]} ${m[4]}:${m[5]}` : texto;
 }
+
+/**
+ * Transiciones de estado válidas para el panel de administración.
+ *   PAGADA         → EN_PREPARACION | CANCELADA
+ *   EN_PREPARACION → DESPACHADA     | CANCELADA
+ *   DESPACHADA     → ENTREGADA
+ */
+export const TRANSICIONES_ORDEN = {
+  PAGADA: [
+    { estado: 'EN_PREPARACION', etiqueta: 'Preparar', variante: 'outline-dark' },
+    { estado: 'CANCELADA', etiqueta: 'Cancelar', variante: 'outline-danger', requiereConfirmacion: true }
+  ],
+  EN_PREPARACION: [
+    { estado: 'DESPACHADA', etiqueta: 'Despachar', variante: 'outline-dark' },
+    { estado: 'CANCELADA', etiqueta: 'Cancelar', variante: 'outline-danger', requiereConfirmacion: true }
+  ],
+  DESPACHADA: [
+    { estado: 'ENTREGADA', etiqueta: 'Entregar', variante: 'outline-success' }
+  ],
+  ENTREGADA: [],
+  CANCELADA: []
+};
+
+export const transicionesOrden = (estado) => TRANSICIONES_ORDEN[estado] ?? [];
+
+export const puedeEliminarOrden = (estado) => estado === 'ENTREGADA' || estado === 'CANCELADA';
