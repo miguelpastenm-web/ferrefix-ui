@@ -12,6 +12,9 @@ import GeneradorProductos from '../components/GeneradorProductos';
 import AdminDashboard from '../components/AdminDashboard';
 import AdminProductos from '../components/AdminProductos';
 import AdminOrdenes from '../components/AdminOrdenes';
+import AdminMaquinas from '../components/AdminMaquinas';
+import AdminArriendos from '../components/AdminArriendos';
+import AdminCotizaciones from '../components/AdminCotizaciones';
 import FormularioProducto from '../components/FormularioProducto';
 import ModalStock from '../components/ModalStock';
 import ModalConfirmacion from '../components/ModalConfirmacion';
@@ -214,6 +217,15 @@ function Admin() {
               <button type="button" className={`admin-nav-btn ${tabActiva === 'ordenes' ? 'active' : ''}`} onClick={() => setTabActiva('ordenes')}>
                 Órdenes ({ordenes.length})
               </button>
+              <button type="button" className={`admin-nav-btn ${tabActiva === 'maquinas' ? 'active' : ''}`} onClick={() => setTabActiva('maquinas')}>
+                Máquinas
+              </button>
+              <button type="button" className={`admin-nav-btn ${tabActiva === 'arriendos' ? 'active' : ''}`} onClick={() => setTabActiva('arriendos')}>
+                Arriendos
+              </button>
+              <button type="button" className={`admin-nav-btn ${tabActiva === 'cotizaciones' ? 'active' : ''}`} onClick={() => setTabActiva('cotizaciones')}>
+                Cotizaciones
+              </button>
               <button type="button" className={`admin-nav-btn ${tabActiva === 'generadores' ? 'active' : ''}`} onClick={() => setTabActiva('generadores')}>
                 Generadores
               </button>
@@ -303,6 +315,11 @@ function Admin() {
               }}
             />
           )}
+
+        {/* Maquinaria, Arriendos y Cotizaciones (carga bajo demanda al abrir cada pestaña) */}
+        {tabActiva === 'maquinas' && <AdminMaquinas onNotificar={mostrarMensaje} />}
+        {tabActiva === 'arriendos' && <AdminArriendos onNotificar={mostrarMensaje} />}
+        {tabActiva === 'cotizaciones' && <AdminCotizaciones onNotificar={mostrarMensaje} />}
 
         {/* Generadores de ofertas: suben sus imágenes al backend (destino "ofertas") */}
         {tabActiva === 'generadores' && (
