@@ -7,7 +7,7 @@ import { validarFormulario, validadores } from '../data/validaciones.js';
 const REGLAS_REGISTRO = {
   nombre: validadores.nombre,
   rut: validadores.rut,
-  email: validadores.email,
+  email: validadores.emailRegistro,
   password: validadores.password
 };
 
@@ -16,7 +16,7 @@ describe('Formulario Registro de Cliente', () => {
     const correcto = validarFormulario(REGLAS_REGISTRO, {
       nombre: 'Juan Pérez',
       rut: '12.345.678-5',
-      email: 'juan@ferrefix.cl',
+      email: 'juan@duoc.cl',
       password: 'segura123'
     });
     expect(Object.keys(correcto)).toHaveLength(0);
@@ -24,7 +24,7 @@ describe('Formulario Registro de Cliente', () => {
     const passwordCorta = validarFormulario(REGLAS_REGISTRO, {
       nombre: 'Juan Pérez',
       rut: '12.345.678-5',
-      email: 'juan@ferrefix.cl',
+      email: 'juan@duoc.cl',
       password: '1234567'
     });
     expect(passwordCorta.password).toContain('8 caracteres');
@@ -34,10 +34,18 @@ describe('Formulario Registro de Cliente', () => {
     const enElLimite = validarFormulario(REGLAS_REGISTRO, {
       nombre: 'Ana',
       rut: '12.345.678-5',
-      email: 'ana@correo.cl',
+      email: 'ana@gmail.com',
       password: '12345678'
     });
     expect(Object.keys(enElLimite)).toHaveLength(0);
+
+    const dominioNoPermitido = validarFormulario(REGLAS_REGISTRO, {
+      nombre: 'Ana',
+      rut: '12.345.678-5',
+      email: 'ana@ferrefix.cl',
+      password: '12345678'
+    });
+    expect(dominioNoPermitido.email).toContain('@duoc.cl');
 
     const rutMalo = validarFormulario(REGLAS_REGISTRO, {
       nombre: 'Ana',
