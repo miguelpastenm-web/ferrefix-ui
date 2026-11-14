@@ -24,3 +24,17 @@ export function calcularMetricasProductos(productos) {
     valorInventario: lista.reduce((acc, p) => acc + (Number(p.precioVenta) || 0) * Math.max(0, Number(p.stock) || 0), 0)
   };
 }
+
+/**
+ * Métricas de ventas desde las órdenes que entrega la API.
+ * Las órdenes CANCELADA no se cuentan en el total cobrado ni en las órdenes vigentes.
+ */
+export function calcularMetricasOrdenes(ordenes) {
+  const lista = Array.isArray(ordenes) ? ordenes : [];
+  const vigentes = lista.filter((o) => o.estado !== 'CANCELADA');
+  return {
+    totalOrdenes: lista.length,
+    ordenesVigentes: vigentes.length,
+    totalVentas: vigentes.reduce((acc, o) => acc + (Number(o.total) || 0), 0)
+  };
+}

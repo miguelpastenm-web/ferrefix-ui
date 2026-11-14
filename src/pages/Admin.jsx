@@ -1,18 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { obtenerOrdenes, EVENTO_ORDENES_ACTUALIZADAS } from '../data/ordenes';
+import { listarOrdenes, cambiarEstadoOrden, eliminarOrden } from '../api/ordenes';
 import { listarProductos, eliminarProducto } from '../api/productos';
 import { useAuth } from '../context/authContexto';
 import { useCarga } from '../hooks/useCarga';
 import { formatearCLP } from '../utils/formato';
-import { calcularMetricasProductos, requiereReposicion } from '../utils/metricasAdmin';
+import { calcularMetricasProductos, calcularMetricasOrdenes, requiereReposicion } from '../utils/metricasAdmin';
 import { clasificarErrorAdmin } from '../utils/errorAdmin';
+import { etiquetaMetodoPago, formatearFechaOrden, infoEstadoOrden } from '../utils/estadosOrden';
 import GeneradorProductos from '../components/GeneradorProductos';
 import AdminDashboard from '../components/AdminDashboard';
 import AdminProductos from '../components/AdminProductos';
+import AdminOrdenes from '../components/AdminOrdenes';
 import FormularioProducto from '../components/FormularioProducto';
 import ModalStock from '../components/ModalStock';
 import ModalConfirmacion from '../components/ModalConfirmacion';
+import InsigniaEstadoOrden from '../components/InsigniaEstadoOrden';
 import ErrorCarga from '../components/ErrorCarga';
 import { IndicadorCarga } from '../components/EsperarSesion';
 
@@ -25,26 +28,41 @@ function Admin() {
   const { ultimos, cargando: cargandoProductos, error: errorProductos, recargar: recargarProductos } = useCarga(listarProductos, 'admin-productos');
   const productos = useMemo(() => ultimos ?? [], [ultimos]);
 
-  // Órdenes: siguen locales hasta la etapa E8.
-  const [ordenes, setOrdenes] = useState(obtenerOrdenes);
+  // Órdenes: vienen de la API. Tras cada cambio de estado o borrado se vuelven a cargar.
+  const {
+    ultimos: ultimasOrdenes,
+    cargando: cargandoOrdenes,
+    error: errorOrdenes,
+    recargar: recargarOrdenes
+  } = useCarga(listarOrdenes, 'admin-ordenes');
+  const ordenes = useMemo(() => ultimasOrdenes ?? [], [ultimasOrdenes]);
+
   const [tabActiva, setTabActiva] = useState('dashboard'); // 'dashboard' | 'productos' | 'ordenes' | 'generadores'
   const [soloCriticos, setSoloCriticos] = useState(false);
 
-  // Diálogos
+  // Diálogos de productos
   const [formulario, setFormulario] = useState(null); // null | { producto: objeto|null }
   const [productoStock, setProductoStock] = useState(null);
   const [productoAEliminar, setProductoAEliminar] = useState(null);
   const [eliminando, setEliminando] = useState(false);
   const [errorEliminar, setErrorEliminar] = useState('');
   const eliminandoRef = useRef(false);
-  const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
-  const [mensajeAlerta, setMensajeAlerta] = useState(null);
 
-  useEffect(() => {
-    const handleOrdenes = () => setOrdenes(obtenerOrdenes());
-    window.addEventListener(EVENTO_ORDENES_ACTUALIZADAS, handleOrdenes);
-    return () => window.removeEventListener(EVENTO_ORDENES_ACTUALIZADAS, handleOrdenes);
-  }, []);
+  // Diálogos y acciones de órdenes
+  const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
+  const [ordenEnProcesoId, setOrdenEnProcesoId] = useState(null);
+  const ordenEnProcesoRef = useRef(false);
+  const [errorOrdenAccion, setErrorOrdenAccion] = useState('');
+  const [ordenACancelar, setOrdenACancelar] = useState(null);
+  const [cancelandoOrden, setCancelandoOrden] = useState(false);
+  const [errorCancelarOrden, setErrorCancelarOrden] = useState('');
+  const cancelandoOrdenRef = useRef(false);
+  const [ordenAEliminar, setOrdenAEliminar] = useState(null);
+  const [eliminandoOrden, setEliminandoOrden] = useState(false);
+  const [errorEliminarOrden, setErrorEliminarOrden] = useState('');
+  const eliminandoOrdenRef = useRef(false);
+
+  const [mensajeAlerta, setMensajeAlerta] = useState(null);
 
   const mostrarMensaje = (texto, tipo = 'dark') => {
     setMensajeAlerta({ texto, tipo });
@@ -56,11 +74,14 @@ function Admin() {
     () => productos.filter(requiereReposicion).sort((a, b) => Number(a.stock) - Number(b.stock)),
     [productos]
   );
-  // Ventas: mientras las órdenes sean locales (hasta E8) se mantiene la tarjeta original.
+  const metricasOrdenes = useMemo(() => calcularMetricasOrdenes(ordenes), [ordenes]);
   const ventas = {
     titulo: 'Ventas Registradas',
-    valor: formatearCLP(ordenes.reduce((acc, o) => acc + (Number(o.total) || 0), 0)),
-    subtitulo: `${ordenes.length} órdenes procesadas`
+    valor: errorOrdenes && ultimasOrdenes === null ? '—' : formatearCLP(metricasOrdenes.totalVentas),
+    subtitulo:
+      errorOrdenes && ultimasOrdenes === null
+        ? 'No pudimos cargar las órdenes'
+        : `${metricasOrdenes.ordenesVigentes} ${metricasOrdenes.ordenesVigentes === 1 ? 'orden vigente' : 'órdenes vigentes'}`
   };
 
   const alGuardarProducto = (producto, modo) => {
@@ -93,6 +114,66 @@ function Admin() {
     }
   };
 
+  const ejecutarCambioEstadoOrden = async (orden, nuevoEstado) => {
+    if (!orden || ordenEnProcesoRef.current) return;
+    ordenEnProcesoRef.current = true;
+    setOrdenEnProcesoId(orden.id);
+    setErrorOrdenAccion('');
+    try {
+      await cambiarEstadoOrden(orden.id, nuevoEstado);
+      mostrarMensaje(`Orden ${orden.codigo} actualizada a ${infoEstadoOrden(nuevoEstado).etiqueta}.`);
+      recargarOrdenes();
+    } catch (error) {
+      const caso = clasificarErrorAdmin(error);
+      setErrorOrdenAccion(caso.mensaje);
+      if (caso.tipo === 'no-existe' || caso.tipo === 'sin-confirmar' || caso.tipo === 'conflicto') recargarOrdenes();
+    } finally {
+      ordenEnProcesoRef.current = false;
+      setOrdenEnProcesoId(null);
+    }
+  };
+
+  const ejecutarCancelacionOrden = async () => {
+    if (!ordenACancelar || cancelandoOrdenRef.current) return;
+    cancelandoOrdenRef.current = true;
+    setCancelandoOrden(true);
+    setErrorCancelarOrden('');
+    try {
+      await cambiarEstadoOrden(ordenACancelar.id, 'CANCELADA');
+      mostrarMensaje(`Orden ${ordenACancelar.codigo} cancelada. El stock fue devuelto.`);
+      setOrdenACancelar(null);
+      recargarOrdenes();
+      recargarProductos();
+    } catch (error) {
+      const caso = clasificarErrorAdmin(error);
+      setErrorCancelarOrden(caso.mensaje);
+      if (caso.tipo === 'no-existe' || caso.tipo === 'sin-confirmar' || caso.tipo === 'conflicto') recargarOrdenes();
+    } finally {
+      cancelandoOrdenRef.current = false;
+      setCancelandoOrden(false);
+    }
+  };
+
+  const ejecutarEliminacionOrden = async () => {
+    if (!ordenAEliminar || eliminandoOrdenRef.current) return;
+    eliminandoOrdenRef.current = true;
+    setEliminandoOrden(true);
+    setErrorEliminarOrden('');
+    try {
+      await eliminarOrden(ordenAEliminar.id);
+      mostrarMensaje(`Orden ${ordenAEliminar.codigo} eliminada.`);
+      setOrdenAEliminar(null);
+      recargarOrdenes();
+    } catch (error) {
+      const caso = clasificarErrorAdmin(error);
+      setErrorEliminarOrden(caso.mensaje);
+      if (caso.tipo === 'no-existe' || caso.tipo === 'sin-confirmar' || caso.tipo === 'conflicto') recargarOrdenes();
+    } finally {
+      eliminandoOrdenRef.current = false;
+      setEliminandoOrden(false);
+    }
+  };
+
   const handleCerrarSesion = () => {
     logout();
     navigate('/', { replace: true });
@@ -102,6 +183,14 @@ function Admin() {
     if (cargandoProductos && ultimos === null) return <IndicadorCarga etiqueta="Cargando productos…" />;
     if (errorProductos && ultimos === null) {
       return <ErrorCarga error={errorProductos} onReintentar={recargarProductos} titulo="No pudimos cargar los productos" />;
+    }
+    return contenido;
+  };
+
+  const vistaOrdenes = (contenido) => {
+    if (cargandoOrdenes && ultimasOrdenes === null) return <IndicadorCarga etiqueta="Cargando órdenes…" />;
+    if (errorOrdenes && ultimasOrdenes === null) {
+      return <ErrorCarga error={errorOrdenes} onReintentar={recargarOrdenes} titulo="No pudimos cargar las órdenes" />;
     }
     return contenido;
   };
@@ -155,12 +244,6 @@ function Admin() {
       {/* Contenedor Principal */}
       <main className="container-fluid px-3 px-md-4 py-4">
 
-        {/* Hasta la etapa E8 las órdenes de este panel siguen locales: se avisa para no confundir con la tienda */}
-        <div className="alert alert-warning rounded-2 mb-3" role="note">
-          <strong>Órdenes locales de demostración.</strong> La pestaña Órdenes y la tarjeta de ventas todavía no están
-          conectadas a la API (se integran en la etapa E8): las compras reales de los clientes no aparecen en esas listas.
-        </div>
-
         {mensajeAlerta && (
           <div className="admin-box p-3 mb-3 d-flex justify-content-between align-items-center" role="status">
             <span className="admin-notice-text">{mensajeAlerta.texto}</span>
@@ -201,72 +284,25 @@ function Admin() {
           )}
 
         {/* Boletas y Ordenes */}
-        {tabActiva === 'ordenes' && (
-          <div className="admin-box p-3">
-            <div className="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom">
-              <div>
-                <h2 className="admin-section-title mb-0">Registro de Órdenes y Ventas</h2>
-                <span className="admin-muted">Listado de transacciones registradas</span>
-              </div>
-              <span className="admin-badge-soft">
-                {ordenes.length} órdenes registradas
-              </span>
-            </div>
-
-            <div className="table-responsive">
-              <table className="table admin-table align-middle mb-0">
-                <thead>
-                  <tr>
-                    <th>N° Orden</th>
-                    <th>Fecha / Hora</th>
-                    <th>Cliente</th>
-                    <th>Dirección de Entrega</th>
-                    <th>Método de Pago</th>
-                    <th className="admin-ta-end">Total Pagado</th>
-                    <th>Estado</th>
-                    <th className="admin-ta-end">Acción</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ordenes.map((ord) => (
-                    <tr key={ord.idOrden}>
-                      <td className="admin-cell-price">
-                        #{ord.idOrden}
-                      </td>
-                      <td className="admin-muted">{ord.fecha}</td>
-                      <td>
-                        <div className="admin-cell-strong">{ord.cliente.nombre}</div>
-                        <div className="admin-order-email">{ord.cliente.email}</div>
-                      </td>
-                      <td className="admin-td-address admin-muted marca-truncar">
-                        {ord.cliente.direccion}
-                      </td>
-                      <td className="admin-muted">{ord.metodoPago}</td>
-                      <td className="admin-ta-end admin-cell-price">
-                        {formatearCLP(ord.total)}
-                      </td>
-                      <td>
-                        <span className="admin-badge-soft">
-                          {ord.estado}
-                        </span>
-                      </td>
-                      <td className="admin-ta-end">
-                        <button 
-                          type="button"
-                          className="btn btn-sm btn-outline-dark rounded-1 py-0 px-2"
-                          onClick={() => setOrdenSeleccionada(ord)}
-                        >
-                          Ver Boleta
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-          </div>
-        )}
+        {tabActiva === 'ordenes' &&
+          vistaOrdenes(
+            <AdminOrdenes
+              ordenes={ordenes}
+              ordenEnProcesoId={ordenEnProcesoId}
+              errorAccion={errorOrdenAccion}
+              onLimpiarError={() => setErrorOrdenAccion('')}
+              onVerBoleta={setOrdenSeleccionada}
+              onCambiarEstado={ejecutarCambioEstadoOrden}
+              onSolicitarCancelar={(orden) => {
+                setErrorCancelarOrden('');
+                setOrdenACancelar(orden);
+              }}
+              onSolicitarEliminar={(orden) => {
+                setErrorEliminarOrden('');
+                setOrdenAEliminar(orden);
+              }}
+            />
+          )}
 
         {/* Generadores de ofertas: suben sus imágenes al backend (destino "ofertas") */}
         {tabActiva === 'generadores' && (
@@ -312,6 +348,39 @@ function Admin() {
         />
       )}
 
+      {ordenACancelar && (
+        <ModalConfirmacion
+          titulo="¿Cancelar orden?"
+          mensaje={
+            <>
+              Se cancelará la orden <strong>{ordenACancelar.codigo}</strong> y se devolverá el stock de sus productos al inventario.
+            </>
+          }
+          textoConfirmar="Confirmar cancelación"
+          procesando={cancelandoOrden}
+          error={errorCancelarOrden}
+          onConfirmar={ejecutarCancelacionOrden}
+          onCancelar={() => setOrdenACancelar(null)}
+        />
+      )}
+
+      {ordenAEliminar && (
+        <ModalConfirmacion
+          titulo="¿Eliminar orden?"
+          mensaje={
+            <>
+              Se eliminará definitivamente la orden <strong>{ordenAEliminar.codigo}</strong> ({ordenAEliminar.boleta}). Esta acción no
+              modifica el stock del inventario.
+            </>
+          }
+          textoConfirmar="Eliminar"
+          procesando={eliminandoOrden}
+          error={errorEliminarOrden}
+          onConfirmar={ejecutarEliminacionOrden}
+          onCancelar={() => setOrdenAEliminar(null)}
+        />
+      )}
+
       {/* ============================================================== */}
       {/* MODAL: VER BOLETA                                              */}
       {/* ============================================================== */}
@@ -321,23 +390,42 @@ function Admin() {
             <div className="modal-content rounded-1 border-0 shadow">
               <div className="modal-header admin-modal-head border-bottom py-2 px-3">
                 <h5 className="modal-title admin-modal-title mb-0">
-                  Boleta Electrónica #{ordenSeleccionada.idOrden}
+                  Boleta Electrónica {ordenSeleccionada.boleta || ordenSeleccionada.codigo}
                 </h5>
                 <button type="button" className="btn-close btn-close-sm" onClick={() => setOrdenSeleccionada(null)}></button>
               </div>
 
               <div className="modal-body p-3">
-                <div className="border-bottom pb-2 mb-3">
-                  <div className="admin-cell-strong">FERREFIX</div>
-                  <small className="admin-muted">RUT: 76.845.120-K | Antonio Varas 666, Providencia</small>
+                <div className="d-flex justify-content-between align-items-start border-bottom pb-2 mb-3">
+                  <div>
+                    <div className="admin-cell-strong">FERREFIX</div>
+                    <small className="admin-muted">RUT: 76.845.120-K | Antonio Varas 666, Providencia</small>
+                  </div>
+                  <InsigniaEstadoOrden estado={ordenSeleccionada.estado} />
                 </div>
 
                 <div className="admin-muted mb-3">
-                  <div><strong>Fecha:</strong> {ordenSeleccionada.fecha}</div>
-                  <div><strong>Cliente:</strong> {ordenSeleccionada.cliente.nombre}</div>
-                  <div><strong>Email:</strong> {ordenSeleccionada.cliente.email}</div>
-                  <div><strong>Dirección:</strong> {ordenSeleccionada.cliente.direccion}</div>
-                  <div><strong>Método:</strong> {ordenSeleccionada.metodoPago}</div>
+                  <div><strong>Orden:</strong> {ordenSeleccionada.codigo}</div>
+                  <div><strong>Fecha:</strong> {formatearFechaOrden(ordenSeleccionada.createdAt)}</div>
+                  {ordenSeleccionada.cliente && (
+                    <>
+                      <div><strong>Cliente:</strong> {ordenSeleccionada.cliente.nombre}</div>
+                      {ordenSeleccionada.cliente.rut && <div><strong>RUT:</strong> {ordenSeleccionada.cliente.rut}</div>}
+                      <div><strong>Email:</strong> {ordenSeleccionada.cliente.email}</div>
+                    </>
+                  )}
+                  {ordenSeleccionada.envio && (
+                    <>
+                      <div><strong>Teléfono:</strong> {ordenSeleccionada.envio.telefono}</div>
+                      <div>
+                        <strong>Dirección:</strong> {ordenSeleccionada.envio.direccion}, {ordenSeleccionada.envio.comuna}, {ordenSeleccionada.envio.region}
+                      </div>
+                      {ordenSeleccionada.envio.indicaciones && (
+                        <div><strong>Indicaciones:</strong> {ordenSeleccionada.envio.indicaciones}</div>
+                      )}
+                    </>
+                  )}
+                  <div><strong>Método:</strong> {etiquetaMetodoPago(ordenSeleccionada.metodoPago)}</div>
                 </div>
 
                 <div className="table-responsive border rounded-1 mb-3">
@@ -350,27 +438,41 @@ function Admin() {
                       </tr>
                     </thead>
                     <tbody>
-                      {ordenSeleccionada.items.map((item, idx) => (
-                        <tr key={idx}>
+                      {(ordenSeleccionada.items ?? []).map((item, idx) => (
+                        <tr key={`${item.sku}-${idx}`}>
                           <td>{item.nombre}</td>
                           <td className="admin-ta-center">{item.cantidad}</td>
-                          <td className="admin-ta-end admin-mono">{formatearCLP(item.precioUnitario * item.cantidad)}</td>
+                          <td className="admin-ta-end admin-mono">
+                            {formatearCLP(item.subtotal ?? item.precioUnitario * item.cantidad)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
 
-                <div className="d-flex justify-content-between align-items-center pt-2 border-top">
-                  <span className="admin-cell-strong">Total:</span>
-                  <span className="admin-total-value">{formatearCLP(ordenSeleccionada.total)}</span>
+                <div className="pt-2 border-top">
+                  <div className="d-flex justify-content-between admin-muted mb-1">
+                    <span>Subtotal:</span>
+                    <span className="admin-mono">{formatearCLP(ordenSeleccionada.subtotal)}</span>
+                  </div>
+                  <div className="d-flex justify-content-between admin-muted mb-2">
+                    <span>Costo de envío:</span>
+                    <span className="admin-mono">
+                      {ordenSeleccionada.costoEnvio === 0 ? 'Gratis' : formatearCLP(ordenSeleccionada.costoEnvio)}
+                    </span>
+                  </div>
+                  <div className="d-flex justify-content-between align-items-center pt-1 border-top">
+                    <span className="admin-cell-strong">Total:</span>
+                    <span className="admin-total-value">{formatearCLP(ordenSeleccionada.total)}</span>
+                  </div>
                 </div>
               </div>
 
               <div className="modal-footer admin-modal-foot border-top py-2 px-3">
-                <button 
-                  type="button" 
-                  className="btn btn-secondary btn-sm rounded-1" 
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm rounded-1"
                   onClick={() => setOrdenSeleccionada(null)}
                 >
                   Cerrar
