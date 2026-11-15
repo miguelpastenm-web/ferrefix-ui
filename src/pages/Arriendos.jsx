@@ -14,7 +14,8 @@ import { REGIONES_CHILE, REGION_POR_DEFECTO, normalizarRegion, obtenerComunas, o
 import {
   validadores,
   validarFormulario,
-  formatearTelefono
+  filtrarEntradaTelefono,
+  normalizarTelefonoCampo
 } from '../data/validaciones';
 
 const REGLAS_VALIDACION = {
@@ -102,8 +103,13 @@ function Arriendos() {
 
   const handleBlur = (campo) => {
     setTouched((prev) => ({ ...prev, [campo]: true }));
+    let valor = form[campo];
+    if (campo === 'telefono') {
+      valor = normalizarTelefonoCampo(valor);
+      if (valor !== form.telefono) setForm((prev) => ({ ...prev, telefono: valor }));
+    }
     const validador = REGLAS_VALIDACION[campo];
-    if (validador) setErrores((prev) => ({ ...prev, [campo]: validador(form[campo]) }));
+    if (validador) setErrores((prev) => ({ ...prev, [campo]: validador(valor) }));
   };
 
   const claseCampo = (campo, base = 'form-control form-control-sm rounded-1') =>
@@ -122,7 +128,13 @@ function Arriendos() {
     if (!maquinaSeleccionada || enviandoRef.current) return;
     setErrorMsg('');
 
-    const nuevosErrores = validarFormulario(REGLAS_VALIDACION, form);
+    const telefonoNormalizado = normalizarTelefonoCampo(form.telefono);
+    const datosValidar = telefonoNormalizado === form.telefono ? form : { ...form, telefono: telefonoNormalizado };
+    if (telefonoNormalizado !== form.telefono) {
+      setForm((prev) => ({ ...prev, telefono: telefonoNormalizado }));
+    }
+
+    const nuevosErrores = validarFormulario(REGLAS_VALIDACION, datosValidar);
     setErrores(nuevosErrores);
     setTouched(
       Object.keys(REGLAS_VALIDACION).reduce((acc, campo) => ({ ...acc, [campo]: true }), {})
@@ -140,7 +152,7 @@ function Arriendos() {
         maquinaId: maquinaSeleccionada.id,
         diasArriendo: form.diasArriendo,
         fechaInicio: form.fechaInicio,
-        telefono: form.telefono,
+        telefono: telefonoNormalizado,
         direccionFaena: form.direccion,
         region: regionSeleccionada,
         comuna: form.comuna
@@ -344,10 +356,10 @@ function Arriendos() {
                         className={claseCampo('telefono')}
                         placeholder="+56 9 9876 5432"
                         value={form.telefono}
-                        onChange={(e) => handleChange('telefono', formatearTelefono(e.target.value))}
+                        onChange={(e) => handleChange('telefono', filtrarEntradaTelefono(e.target.value))}
                         onBlur={() => handleBlur('telefono')}
                         inputMode="tel"
-                        maxLength={17}
+                        maxLength={25}
                         required
                       />
                       {errores.telefono && <div className="invalid-feedback">{errores.telefono}</div>}

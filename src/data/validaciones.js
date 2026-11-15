@@ -66,17 +66,42 @@ export const formatearRut = (rut) => {
   return `${cuerpo}-${limpio.slice(-1)}`;
 };
 
-// Da formato +56 9 1234 5678 a un teléfono chileno.
+// Da formato +56 9 1234 5678 a un teléfono móvil chileno.
 export const formatearTelefono = (telefono) => {
   let digitos = texto(telefono).replace(/\D/g, '');
-  if (digitos.startsWith('56') && digitos.length > 2) digitos = digitos.slice(2);
   if (!digitos) return '';
+  if (digitos === '56') return texto(telefono).startsWith('+') ? '+56' : '56';
+  if (digitos.startsWith('56') && digitos.length > 2) digitos = digitos.slice(2);
   if (digitos.startsWith('9')) {
     const resto = digitos.slice(1, 9);
     const partes = [resto.slice(0, 4), resto.slice(4, 8)].filter(Boolean);
     return `+56 9${partes.length ? ` ${partes.join(' ')}` : ''}`;
   }
   return `+56 ${digitos}`;
+};
+
+/** Limita la entrada de teléfono por cantidad de dígitos (9 sin 56, 11 con 56) sin forzar prefijo. */
+export const filtrarEntradaTelefono = (valor) => {
+  const permitido = String(valor ?? '').replace(/[^\d+\s-]/g, '');
+  const soloDigitos = permitido.replace(/\D/g, '');
+  const maxDigitos = soloDigitos.startsWith('56') ? 11 : 9;
+  let contados = 0;
+  let resultado = '';
+  for (const ch of permitido) {
+    if (/\d/.test(ch)) {
+      if (contados >= maxDigitos) break;
+      contados += 1;
+    }
+    resultado += ch;
+  }
+  return resultado;
+};
+
+/** Normaliza un teléfono con contenido al formato estándar; si está vacío, lo conserva vacío. */
+export const normalizarTelefonoCampo = (valor) => {
+  const limpio = texto(valor);
+  if (!limpio) return '';
+  return formatearTelefono(limpio);
 };
 
 export const DOMINIOS_CORREO_REGISTRO = ['duoc.cl', 'profesor.duoc.cl', 'gmail.com'];
@@ -133,7 +158,7 @@ export const validadores = {
     const v = texto(valor);
     if (!v) return 'El teléfono es obligatorio.';
     const limpio = normalizarTelefono(v);
-    if (!REGEX_TELEFONO_MOVIL.test(limpio) && !REGEX_TELEFONO_FIJO.test(limpio)) {
+    if (!REGEX_TELEFONO_MOVIL.test(limpio)) {
       return 'Teléfono chileno inválido (ej: +56 9 1234 5678).';
     }
     return '';

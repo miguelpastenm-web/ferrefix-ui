@@ -6,7 +6,7 @@ import { ApiError, erroresPorCampo } from "../api/errores";
 import HistorialCompras from "../components/HistorialCompras";
 import HistorialArriendos from "../components/HistorialArriendos";
 import { REGIONES_CHILE, normalizarRegion, obtenerComunas } from "../data/chile";
-import { validadores, formatearTelefono } from "../data/validaciones";
+import { validadores, filtrarEntradaTelefono, normalizarTelefonoCampo } from "../data/validaciones";
 import { mostrarToast } from "../components/ToastNotificacion";
 
 export default function CuentaCliente() {
@@ -53,10 +53,16 @@ export default function CuentaCliente() {
     e.preventDefault();
     const errs = {};
 
-    if (!formDatos.nombre.trim()) errs.nombre = "El nombre es requerido.";
-    const errTel = validadores.telefono(formDatos.telefono);
+    const telefonoNormalizado = normalizarTelefonoCampo(formDatos.telefono);
+    const datosGuardar = telefonoNormalizado === formDatos.telefono ? formDatos : { ...formDatos, telefono: telefonoNormalizado };
+    if (telefonoNormalizado !== formDatos.telefono) {
+      setFormDatos(datosGuardar);
+    }
+
+    if (!datosGuardar.nombre.trim()) errs.nombre = "El nombre es requerido.";
+    const errTel = validadores.telefono(datosGuardar.telefono);
     if (errTel) errs.telefono = errTel;
-    if (!formDatos.direccion.trim()) errs.direccion = "La dirección de entrega es obligatoria.";
+    if (!datosGuardar.direccion.trim()) errs.direccion = "La dirección de entrega es obligatoria.";
 
     setErrores(errs);
     if (Object.keys(errs).length > 0) return;
@@ -64,7 +70,7 @@ export default function CuentaCliente() {
     setGuardando(true);
     try {
       // El RUT y el correo no se envían: el servidor no permite cambiarlos.
-      const actualizado = await actualizarPerfil(formDatos);
+      const actualizado = await actualizarPerfil(datosGuardar);
       actualizarUsuario(actualizado); // el contexto queda con los datos nuevos sin volver a iniciar sesión
       setEditando(false);
       mostrarToast({
@@ -229,9 +235,15 @@ export default function CuentaCliente() {
                           type="tel"
                           className={`form-control form-control-sm rounded-1 ${errores.telefono ? "is-invalid" : ""}`}
                           value={formDatos.telefono}
-                          onChange={(e) => setFormDatos({ ...formDatos, telefono: formatearTelefono(e.target.value) })}
+                          onChange={(e) => setFormDatos({ ...formDatos, telefono: filtrarEntradaTelefono(e.target.value) })}
+                          onBlur={() => {
+                            const normalizado = normalizarTelefonoCampo(formDatos.telefono);
+                            if (normalizado !== formDatos.telefono) {
+                              setFormDatos((prev) => ({ ...prev, telefono: normalizado }));
+                            }
+                          }}
                           placeholder="+56 9 8765 4321"
-                          maxLength={17}
+                          maxLength={25}
                           required
                         />
                         {errores.telefono && <div className="invalid-feedback">{errores.telefono}</div>}

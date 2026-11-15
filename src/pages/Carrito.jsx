@@ -21,7 +21,7 @@ import { METODOS_PAGO } from '../utils/estadosOrden';
 import { formatearCLP } from '../utils/formato';
 import Boleta from '../components/Boleta';
 import { REGIONES_CHILE, REGION_POR_DEFECTO, normalizarRegion, obtenerComunas, obtenerComunaPorDefecto } from '../data/chile';
-import { validadores, validarFormulario, formatearTelefono } from '../data/validaciones';
+import { validadores, validarFormulario, filtrarEntradaTelefono, normalizarTelefonoCampo } from '../data/validaciones';
 
 // Mismas reglas que el backend (CrearOrdenRequestDto): teléfono, dirección (≤200), región y comuna (≤80, obligatorias),
 // indicaciones (≤500). La interfaz es algo más estricta en teléfono y dirección (formato chileno, ≤80).
@@ -141,7 +141,12 @@ function Carrito() {
 
   const handleBlur = (campo) => {
     setTouched((prev) => ({ ...prev, [campo]: true }));
-    validarCampo(campo, formEnvio[campo]);
+    let valor = formEnvio[campo];
+    if (campo === 'telefono') {
+      valor = normalizarTelefonoCampo(valor);
+      if (valor !== formEnvio.telefono) setFormEnvio((prev) => ({ ...prev, telefono: valor }));
+    }
+    validarCampo(campo, valor);
   };
 
   const claseCampo = (campo, base = 'form-control form-control-sm rounded-1') =>
@@ -196,7 +201,7 @@ function Carrito() {
     setErrorCompra({ tipo: 'otro', mensaje: error.mensaje, detalles: error.detalles });
   };
 
-  const confirmarCompra = async () => {
+  const confirmarCompra = async (datosEnvio = formEnvio) => {
     if (enviandoRef.current || items.length === 0) return;
     enviandoRef.current = true;
     setEnviando(true);
@@ -204,12 +209,12 @@ function Carrito() {
     try {
       const orden = await crearOrden({
         items: items.map((i) => ({ productoId: i.productoId, cantidad: i.cantidad })),
-        metodoPago: formEnvio.metodoPago,
-        telefono: formEnvio.telefono,
-        direccionEnvio: formEnvio.direccion,
-        region: formEnvio.region,
-        comuna: formEnvio.comuna,
-        indicaciones: formEnvio.indicaciones
+        metodoPago: datosEnvio.metodoPago,
+        telefono: datosEnvio.telefono,
+        direccionEnvio: datosEnvio.direccion,
+        region: datosEnvio.region,
+        comuna: datosEnvio.comuna,
+        indicaciones: datosEnvio.indicaciones
       });
       vaciarCarrito(); // solo cuando el servidor confirmó (201)
       setOrdenCreada(orden);
@@ -226,11 +231,16 @@ function Carrito() {
   const handleProcesarCompra = (e) => {
     e.preventDefault();
     if (items.length === 0 || hayBloqueo) return;
-    const nuevosErrores = validarFormulario(REGLAS_ENVIO, formEnvio);
+    const telefonoNormalizado = normalizarTelefonoCampo(formEnvio.telefono);
+    const datosValidar = telefonoNormalizado === formEnvio.telefono ? formEnvio : { ...formEnvio, telefono: telefonoNormalizado };
+    if (telefonoNormalizado !== formEnvio.telefono) {
+      setFormEnvio((prev) => ({ ...prev, telefono: telefonoNormalizado }));
+    }
+    const nuevosErrores = validarFormulario(REGLAS_ENVIO, datosValidar);
     setErrores(nuevosErrores);
     setTouched(Object.keys(REGLAS_ENVIO).reduce((acc, campo) => ({ ...acc, [campo]: true }), {}));
     if (Object.keys(nuevosErrores).length > 0) return;
-    confirmarCompra();
+    confirmarCompra(datosValidar);
   };
 
   const avisoDeLinea = (item) => {
@@ -578,10 +588,10 @@ function Carrito() {
                         className={claseCampo('telefono')}
                         placeholder="+56 9 1234 5678"
                         value={formEnvio.telefono}
-                        onChange={(e) => handleChange('telefono', formatearTelefono(e.target.value))}
+                        onChange={(e) => handleChange('telefono', filtrarEntradaTelefono(e.target.value))}
                         onBlur={() => handleBlur('telefono')}
                         inputMode="tel"
-                        maxLength={17}
+                        maxLength={25}
                         required
                       />
                       {errores.telefono && <div className="invalid-feedback">{errores.telefono}</div>}
