@@ -9,7 +9,8 @@ import {
   validadores,
   validarFormulario,
   formatearRut,
-  formatearTelefono
+  filtrarEntradaTelefono,
+  normalizarTelefonoCampo
 } from '../data/validaciones';
 
 // Reglas de validación de los campos del formulario.
@@ -58,7 +59,12 @@ function ContactoCotizacion() {
 
   const handleBlur = (campo) => {
     setTouched((prev) => ({ ...prev, [campo]: true }));
-    validarCampo(campo, form[campo]);
+    let valor = form[campo];
+    if (campo === 'telefono') {
+      valor = normalizarTelefonoCampo(valor);
+      if (valor !== form.telefono) setForm((prev) => ({ ...prev, telefono: valor }));
+    }
+    validarCampo(campo, valor);
   };
 
   // Clase de Bootstrap según si el campo tiene error y fue tocado.
@@ -71,7 +77,13 @@ function ContactoCotizacion() {
     setErrorEnvio('');
     setAcuse(null);
 
-    const nuevosErrores = validarFormulario(REGLAS_VALIDACION, form);
+    const telefonoNormalizado = normalizarTelefonoCampo(form.telefono);
+    const datosValidar = telefonoNormalizado === form.telefono ? form : { ...form, telefono: telefonoNormalizado };
+    if (telefonoNormalizado !== form.telefono) {
+      setForm((prev) => ({ ...prev, telefono: telefonoNormalizado }));
+    }
+
+    const nuevosErrores = validarFormulario(REGLAS_VALIDACION, datosValidar);
     setErrores(nuevosErrores);
     setTouched(
       Object.keys(REGLAS_VALIDACION).reduce((acc, campo) => ({ ...acc, [campo]: true }), {})
@@ -84,7 +96,7 @@ function ContactoCotizacion() {
     enviandoRef.current = true;
     setEnviando(true);
     try {
-      const respuesta = await crearCotizacion(form);
+      const respuesta = await crearCotizacion(datosValidar);
       setAcuse(respuesta);
       mostrarToast({
         titulo: "¡Cotización Enviada!",
@@ -243,10 +255,10 @@ function ContactoCotizacion() {
                       className={claseCampo('telefono')}
                       placeholder="+56 9 9876 5432"
                       value={form.telefono}
-                      onChange={(e) => handleChange('telefono', formatearTelefono(e.target.value))}
+                      onChange={(e) => handleChange('telefono', filtrarEntradaTelefono(e.target.value))}
                       onBlur={() => handleBlur('telefono')}
                       inputMode="tel"
-                      maxLength={17}
+                      maxLength={25}
                       required
                     />
                     {errores.telefono && <div className="invalid-feedback">{errores.telefono}</div>}
